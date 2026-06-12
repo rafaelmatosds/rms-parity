@@ -364,6 +364,8 @@ function describe(n, depth=0) {
 
 Compare results against your `structure-contract.mjs`. Any drift → update contract AND CSS together.
 
+**State/variant selectors:** for every non-default Figma state or variant property value (Hover, Disabled, Selected, Size=Small, etc.), document the CSS selector that activates it in `structure-contract.mjs → STATE_SELECTORS`. `structure-check.mjs` verifies each selector exists in the CSS files. Token *values* per state are already covered by Gate [2] — this check only verifies the selector is present and reachable.
+
 ---
 
 ## Phase 2 — Step 4: Hardcoded value scan (A–F)

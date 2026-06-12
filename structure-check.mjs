@@ -24,12 +24,13 @@ const THEME_PATH    = cfg.paths?.themeCSS          ?? 'src/theme.css';
 const SNAPSHOT_PATH = cfg.paths?.snapshotStructure ?? 'src/figma-structure.snapshot.json';
 
 // ── Load structure-contract.mjs ───────────────────────────────────────────────
-let CONTRACT = {}, CSS_HEIGHT_RULES = {}, CSS_BASE_RULE_VARS = [];
+let CONTRACT = {}, CSS_HEIGHT_RULES = {}, CSS_BASE_RULE_VARS = [], STATE_SELECTORS = [];
 try {
   const m = await import(join(ROOT, 'structure-contract.mjs'));
-  if (m.CONTRACT)          CONTRACT          = m.CONTRACT;
-  if (m.CSS_HEIGHT_RULES)  CSS_HEIGHT_RULES  = m.CSS_HEIGHT_RULES;
+  if (m.CONTRACT)           CONTRACT           = m.CONTRACT;
+  if (m.CSS_HEIGHT_RULES)   CSS_HEIGHT_RULES   = m.CSS_HEIGHT_RULES;
   if (m.CSS_BASE_RULE_VARS) CSS_BASE_RULE_VARS = m.CSS_BASE_RULE_VARS;
+  if (m.STATE_SELECTORS)    STATE_SELECTORS    = m.STATE_SELECTORS;
 } catch { /* optional — runs with empty contract */ }
 
 // ── Load snapshot ─────────────────────────────────────────────────────────────
@@ -140,6 +141,30 @@ if (themeCSS) {
   }
 }
 
+// ── State/variant selector check ─────────────────────────────────────────────
+// Verify every Figma state/variant maps to an existing CSS selector.
+// Reads all CSS source files: theme CSS + plugin CSS from ds-config.json.
+const SELECTOR_FAIL = [], SELECTOR_PASS = [];
+if (STATE_SELECTORS.length) {
+  const cssFiles = [THEME_PATH, ...(cfg.paths?.pluginCSS ?? [])];
+  const allCss = cssFiles
+    .filter(f => existsSync(join(ROOT, f)))
+    .map(f => readFileSync(join(ROOT, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, ''))
+    .join('\n');
+
+  for (const entry of STATE_SELECTORS) {
+    // Match selector as a CSS rule opener: preceded by start/comma/newline,
+    // followed by optional whitespace then { or ,
+    const esc = entry.selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const re  = new RegExp(`(?:^|[,\\n])\\s*${esc}\\s*(?:,|\\{)`, 'm');
+    if (re.test(allCss)) {
+      SELECTOR_PASS.push(`${entry.component}/${entry.figmaState}`);
+    } else {
+      SELECTOR_FAIL.push(entry);
+    }
+  }
+}
+
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log(`\n✅ PASS  ${PASS.length}/${Object.keys(CONTRACT).length} components`);
 console.log(`❌ FAIL  ${FAIL.length} field(s)`);
@@ -162,6 +187,18 @@ if (themeCSS) {
   console.log('\n⚠️  theme CSS not found — CSS height and var-binding checks skipped');
 }
 
-const anyFail = FAIL.length > 0 || MISSING.length > 0 || CSS_FAIL.length > 0 || VAR_FAIL.length > 0;
+if (STATE_SELECTORS.length) {
+  console.log(`\n✅ PASS  ${SELECTOR_PASS.length}/${STATE_SELECTORS.length} state/variant selectors`);
+  console.log(`❌ FAIL  ${SELECTOR_FAIL.length}`);
+  if (SELECTOR_FAIL.length) {
+    console.log('\n─── Missing state selectors ───────────────────────────────────');
+    for (const f of SELECTOR_FAIL)
+      console.log(`  ❌ ${f.component} [${f.figmaState}]: selector "${f.selector}" not found in CSS`);
+  }
+} else if (Object.keys(CONTRACT).length) {
+  console.log('\n⏭  STATE_SELECTORS empty in structure-contract.mjs — state selector check skipped');
+}
+
+const anyFail = FAIL.length > 0 || MISSING.length > 0 || CSS_FAIL.length > 0 || VAR_FAIL.length > 0 || SELECTOR_FAIL.length > 0;
 if (!anyFail) { console.log('\nAll component structures match the contract. ✓\n'); process.exit(0); }
 else { console.log(''); process.exit(1); }
