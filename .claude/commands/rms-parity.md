@@ -149,9 +149,21 @@ const PRIMITIVE_PREFIX  = 'YOUR_PRIMITIVE_PREFIX';   // figma.primitivePrefix
 // Build mode lookup: snapshotKey → Figma modeId
 const MODES = [/* from ds-config.json figma.modes */];
 
+// Capture full alias chain: token → [hop1, hop2, ..., "primitives/X"]
+// parity-check.mjs uses this to verify the CSS var() chain routes through
+// the SAME primitives in the SAME order as Figma (Gate [2] ALIAS FAIL check).
+function getAliasChain(varId, modeId, depth=0) {
+  if (depth > 10) return [];
+  const v = idToVar[varId]; if (!v) return [];
+  const val = v.valuesByMode[modeId] ?? Object.values(v.valuesByMode)[0];
+  if (!val || typeof val !== 'object' || val.type !== 'VARIABLE_ALIAS') return [];
+  const aliasedVar = idToVar[val.id]; if (!aliasedVar) return [];
+  return [aliasedVar.name, ...getAliasChain(val.id, modeId, depth + 1)];
+}
+
 const col = collections.find(c => c.name === COLOR_COLLECTION);
 const colorOut = {};
-const aliasesOut = {};  // one-level alias per token per mode (primitive name, or other semantic)
+const aliasesOut = {};  // full alias chain per token per mode — arrays like ["semantic/negative", "primitives/red"]
 for (const m of MODES) {
   const modeId = col.modes.find(fm => fm.name === m.name)?.modeId;
   if (!modeId) continue;
@@ -161,13 +173,8 @@ for (const m of MODES) {
     const v = idToVar[id];
     if (!v || v.resolvedType !== 'COLOR' || v.name.startsWith(PRIMITIVE_PREFIX)) continue;
     colorOut[m.snapshotKey][v.name] = resolveInMode(id, modeId).hex;
-    // Capture direct alias (one hop) — reveals which primitive each semantic token chains through.
-    // parity-check.mjs uses this to catch cases where hex matches but the alias chain diverged.
-    const rawVal = v.valuesByMode[modeId] ?? Object.values(v.valuesByMode)[0];
-    if (typeof rawVal === 'object' && rawVal?.type === 'VARIABLE_ALIAS') {
-      const aliasedName = idToVar[rawVal.id]?.name;
-      if (aliasedName) aliasesOut[m.snapshotKey][v.name] = aliasedName;
-    }
+    const chain = getAliasChain(id, modeId);
+    if (chain.length > 0) aliasesOut[m.snapshotKey][v.name] = chain;
   }
 }
 
@@ -372,25 +379,26 @@ return used;
 
 ---
 
-## Phase 2 — Step 2: Run all 9 audit gates
+## Phase 2 — Step 2: Run all 10 audit gates
 
 ```bash
 node scripts/audit.mjs
 ```
 
-All 9 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
+All 10 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
 
 | Gate | What it catches |
 |---|---|
 | [1] | Snapshot freshness — always ✅ after Phase 1 |
 | [2] | Token value parity — color (all modes) + sizing + typography. NEW SKIP = missing CSS var — treat as ❌ |
-| [3] | Structural parity — height, padding/gap vars, fill structure, stroke |
+| [3] | Structural parity — height · padding/gap/font/radius per-rule var bindings · fill structure · stroke |
 | [4] | Bound-token coverage — token used in Figma but no CSS var |
 | [5] | Unused CSS vars (Hard Rule #2) |
 | [6] | Hardcoded values in CSS rules (Hard Rule #5) |
 | [7] | Build freshness — source newer than built output |
 | [8] | Sub-component isolation (Hard Rule #8) |
-| [9] | Visual regression — Figma screenshots match stored references (requires FIGMA_TOKEN) |
+| [9] | Effect token coverage — shadow/blur tokens have CSS vars (skips if no `effects` in snapshot) |
+| [10] | State completeness — all COMPONENT_SET states covered (skips if `component-state-tokens.json` missing) |
 
 **Gate [2] fix mode:** if Gate [2] fails on sizing/typography values only, run `node scripts/parity-check.mjs --fix` to auto-apply the correct values to `theme.css`, then re-run the audit.
 
@@ -398,11 +406,47 @@ All 9 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
 
 ---
 
-## Phase 2 — Steps 3–9: When are manual steps required?
+## Phase 2 — State walk → `component-state-tokens.json` (enables Gate [10])
 
-| Condition | Steps 3–9 |
+Walk all COMPONENT_SET nodes (not just DS frame instances) to capture tokens bound in EVERY state variant — not just State=Default. This reveals tokens like `buttonList/icon/hover` that are used in Figma's design but may not be wired into CSS hover rules.
+
+```js
+// Walk all COMPONENT_SET children (all state variants, not just State=Default)
+// idToVar must be populated first (same as bound-token walk)
+const PRIMITIVE_PREFIX = 'YOUR_PRIMITIVE_PREFIX';
+const stateTokens = {};
+const sets = figma.currentPage.findAll(n => n.type === 'COMPONENT_SET');
+for (const set of sets) {
+  for (const variant of set.children) {
+    function walkVariant(node) {
+      if (node.boundVariables) {
+        for (const [prop, binding] of Object.entries(node.boundVariables)) {
+          for (const b of (Array.isArray(binding) ? binding : [binding])) {
+            if (!b?.id) continue;
+            const v = idToVar[b.id];
+            if (!v || v.name.startsWith(PRIMITIVE_PREFIX)) continue;
+            if (!stateTokens[v.name]) stateTokens[v.name] = [];
+            stateTokens[v.name].push({ set: set.name, variant: variant.name, prop });
+          }
+        }
+      }
+      if ('children' in node) node.children.forEach(walkVariant);
+    }
+    walkVariant(variant);
+  }
+}
+return stateTokens;
+```
+
+**Save output to `component-state-tokens.json` at project root** (gitignored). Gate [10] will then verify all captured state tokens are implemented in CSS or in the `EXPLICIT`/`COVERED` sets in `bound-check.mjs`. Re-run after any DS component state addition.
+
+---
+
+## Phase 2 — Steps 3–10: When are manual steps required?
+
+| Condition | Steps 3–10 |
 |---|---|
-| All 9 gates pass AND Phase 1 found no new tokens | **Spot-check** — sample 1–2 components per run; full walk not required |
+| All 10 gates pass AND Phase 1 found no new tokens | **Spot-check** — sample 1–2 components per run; full walk not required |
 | Any gate ❌ OR Phase 1 found new/changed tokens | **Mandatory** — run the full sequence before declaring parity |
 | New component added to DS | **Mandatory** — Step 3 deep-walk for that component at minimum |
 
