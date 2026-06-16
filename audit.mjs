@@ -8,18 +8,22 @@
 // Subsequent runs: config exists, audit starts immediately.
 //
 // Gates:
-//   [1] Snapshot freshness     — warns if snapshots are stale (> 24 h)
-//   [2] Parity check           — token values: color + sizing + typography
-//   [3] Structure check        — heights + CSS base-rule var bindings
-//   [4] Bound-token coverage   — every bound Figma token has a CSS var
-//   [5] Unused var check       — no declared-but-orphaned CSS vars
-//   [6] Hardcoded value scan   — no raw hex / px in CSS rules
-//   [7] Build freshness        — source files not newer than built output
-//   [8] Sub-component isolation — no broad element selector overrides sub-component styles
-//   [9] Visual regression      — Figma frame screenshots match stored references
-//                               (requires FIGMA_TOKEN env var; skipped if not set)
+//   [1]  Snapshot freshness     — warns if snapshots are stale (> 24 h)
+//   [2]  Parity check           — token values: color + sizing + typography
+//   [3]  Structure check        — heights + CSS base-rule var bindings
+//   [4]  Bound-token coverage   — every bound Figma token has a CSS var
+//   [5]  Unused var check       — no declared-but-orphaned CSS vars
+//   [6]  Hardcoded value scan   — no raw hex / px in CSS rules
+//   [7]  Build freshness        — source files not newer than built output
+//   [8]  Sub-component isolation — no broad element selector overrides sub-component styles
+//   [9]  Visual regression      — Figma frame screenshots match stored references
+//                                (requires FIGMA_TOKEN env var; skipped if not set)
+//   [10] State completeness     — all COMPONENT_SET state tokens covered (skips if no data)
+//   [11] Exemption validity     — EXPLICIT/SKIP_TOKENS/COVERED entries not stale in snapshot
+//   [12] Dark mode completeness — all mode-variant tokens adapt between light and dark CSS
+//   [13] CSS naming round-trip  — every theme.css var traces back to a Figma token
 //
-// Performance: gates 2–4 and 8–9 (subprocess-based) run in parallel via Promise.all.
+// Performance: gates 2–4, 8–13 (subprocess-based) run in parallel via Promise.all.
 
 import readline                                                  from 'readline';
 import { spawn, spawnSync }                                      from 'child_process';
@@ -309,6 +313,18 @@ async function bootstrapConfig() {
     return { pass, lines: [...summary, ...fixLines] };
   }
 
+  // Generic parser for gates [10-13]: pass/fail from exit code, summary from keyword lines
+  function parseGeneric(r, summaryRe) {
+    if (r.status === null) return { pass: true, lines: ['⏭ script not found — skipped'] };
+    const out  = r.stdout + r.stderr;
+    const pass = r.status === 0;
+    const summary = out.split('\n')
+      .filter(l => summaryRe.test(l) && l.trim()).map(l => l.trim());
+    const failDetails = pass ? [] : out.split('\n')
+      .filter(l => /🚨|❌/.test(l) && l.trim()).map(l => '  ' + l.trim()).slice(0, 20);
+    return { pass, lines: [...summary, ...failDetails] };
+  }
+
   // ── Inline gate computations (no subprocess) ─────────────────────────────────
   function computeGate1() {
     const vars   = snapshotAge(SNAP_VARS);
@@ -444,13 +460,17 @@ async function bootstrapConfig() {
   // Gate 1 — sync (file stat only)
   addGate('Snapshot freshness', computeGate1());
 
-  // Gates 2, 3, 4, 8, 9 — all subprocess-based; launch concurrently
-  const [r2, r3, r4, r8, r9] = await Promise.all([
+  // Gates 2–4, 8–13 — all subprocess-based; launch concurrently
+  const [r2, r3, r4, r8, r9, r10, r11, r12, r13] = await Promise.all([
     runScriptAsync('parity-check.mjs'),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
     runScriptAsync('subcomponent-isolation-check.mjs'),
     runScriptAsync('visual-regression-check.mjs'),
+    runScriptAsync('state-check.mjs'),
+    runScriptAsync('exemption-check.mjs'),
+    runScriptAsync('dark-mode-check.mjs'),
+    runScriptAsync('naming-check.mjs'),
   ]);
 
   addGate('Token parity  (color · sizing · typography)',               parseGate2(r2));
@@ -461,6 +481,10 @@ async function bootstrapConfig() {
   addGate('Build freshness  (source ≤ built output)',                  computeGate7());
   addGate('Sub-component isolation  (no parent rule overrides sub-component styles)', parseGate8(r8));
   addGate('Visual regression  (frames match stored references)',       parseGate9(r9));
+  addGate('State completeness  (all COMPONENT_SET states covered)',    parseGeneric(r10, /COVERED|UNCOVERED/));
+  addGate('Exemption validity  (EXPLICIT · SKIP_TOKENS · COVERED not stale)', parseGeneric(r11, /VALID|STALE|BROKEN/));
+  addGate('Dark mode completeness  (all mode-variant tokens adapt)',   parseGeneric(r12, /ADAPTS|STATIC|SKIPPED/));
+  addGate('CSS naming round-trip  (every var traceable to a Figma token)', parseGeneric(r13, /TRACEABLE|UNINVENTED/));
 
   // ── Final report ──────────────────────────────────────────────────────────────
   console.log('\n' + C.bold('─'.repeat(WIDTH)));

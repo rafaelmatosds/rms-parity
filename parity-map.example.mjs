@@ -91,8 +91,18 @@ export const TYPO = {
 
 // ─── BOUND-TOKEN COVERAGE: Tokens not given a dedicated CSS var ───────────────
 // These are covered by semantic aliases, shared primitives, or are un-implementable.
+// Used by bound-check.mjs (Gate [4]).
 export const COVERED = new Set([
   // Add token paths that are intentionally deferred or covered by aliases
+]);
+
+// ─── STATE WALK COVERAGE: Additional tokens deferred for the state walk ───────
+// Superset of COVERED — adds tokens that appear in COMPONENT_SET variant states
+// but have no HTML/CSS equivalent (e.g. internal Figma preview layers).
+// Used by state-check.mjs (Gate [10]). Falls back to COVERED if absent.
+export const COVERED_STATE = new Set([
+  ...[], // spread COVERED entries here, then add state-walk-specific tokens
+  // 'icon/backgroundpreview',  // internal Figma preview layer
 ]);
 
 // ─── Token path prefixes that are always deferred ─────────────────────────────
@@ -100,3 +110,18 @@ export const COVERED_PREFIX = [
   // 'primitives/',
   // 'Settings/',
 ];
+
+// ─── SYSTEM VARS: CSS vars with no direct 1:1 Figma token ────────────────────
+// Used by naming-check.mjs (Gate [13]).
+// Include: primitive scale vars, semantic one-word aliases, sizing scale vars,
+// animation/motion vars, browser-chrome vars, any CSS utility not in the DS.
+export const SYSTEM_VARS = new Set([
+  // '--bg', '--text', '--border', '--surface', '--accent',
+  // '--neutral-100', '--neutral-200', ... '--neutral-1000',
+  // '--gap-xs', '--gap-s', '--gap-m', '--gap-l', '--gap-xl',
+  // '--padding-xs', '--padding-s', '--padding-m', '--padding-l',
+  // '--radius-full', '--radius-sm', '--radius-md',
+  // '--m-size', '--m-weight', '--s-size', '--s-weight', '--l-size', '--l-weight',
+  // '--modal-duration', '--modal-easing',  // CSS-only motion tokens
+  // '--overlay-bg', '--scrollbar-thumb',   // browser chrome
+]);
