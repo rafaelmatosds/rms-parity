@@ -213,6 +213,49 @@ async function bootstrapConfig() {
   const KNOWN_UNUSED     = new Set(cfg.knownUnusedVars         ?? []);
   const KNOWN_FS_EXCEPTS = cfg.knownHardcodedExceptions        ?? cfg.knownFontSizeExceptions ?? [];
 
+  // Directories and files to never scan for var() references or hardcoded values.
+  const SCAN_EXCLUDE_DIRS = new Set([
+    'node_modules', '.git', 'dist', 'build', '.nuxt', '.next', '.output',
+    'coverage', '.cache', 'public', 'static',
+  ]);
+  // Only scan files that can realistically contain CSS var() references.
+  const SCAN_EXTENSIONS = new Set([
+    '.css', '.scss', '.sass', '.less', '.styl',
+    '.vue', '.svelte',
+    '.html', '.htm',
+    '.jsx', '.tsx', '.js', '.ts',
+  ]);
+  // Files whose content is auto-generated and should not be treated as source.
+  const SCAN_EXCLUDE_FILENAMES = new Set([
+    'figma-vars.snapshot.json', 'figma-structure.snapshot.json',
+    'bound-tokens.json', 'parity-history.json', 'master-token-table.md',
+  ]);
+
+  function collectSourceFiles(dir = ROOT, results = []) {
+    let entries;
+    try { entries = readdirSync(dir, { withFileTypes: true }); } catch { return results; }
+    for (const e of entries) {
+      if (SCAN_EXCLUDE_DIRS.has(e.name)) continue;
+      if (e.isDirectory()) {
+        collectSourceFiles(join(dir, e.name), results);
+      } else if (e.isFile()) {
+        if (SCAN_EXCLUDE_FILENAMES.has(e.name)) continue;
+        const dot = e.name.lastIndexOf('.');
+        if (dot !== -1 && SCAN_EXTENSIONS.has(e.name.slice(dot))) {
+          results.push(join(dir, e.name));
+        }
+      }
+    }
+    return results;
+  }
+
+  // Lazily collected once and reused across gates.
+  let _allSourceFiles = null;
+  function allSourceFiles() {
+    if (!_allSourceFiles) _allSourceFiles = collectSourceFiles();
+    return _allSourceFiles;
+  }
+
   // ── Helpers ──────────────────────────────────────────────────────────────────
   function sh(cmd, args = [], opts = {}) {
     return spawnSync(cmd, args, { cwd: ROOT, encoding: 'utf8', ...opts });
@@ -368,20 +411,22 @@ async function bootstrapConfig() {
     const declared  = [...new Set(
       [...themeText.matchAll(/--([a-zA-Z][a-zA-Z0-9-]*)\s*:/g)].map(m => '--' + m[1])
     )];
-    const srcFiles = [THEME, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
-    const allSrc   = srcFiles.map(f => readFileSync(join(ROOT, f), 'utf8')).join('\n');
-    const unused   = declared.filter(v => !KNOWN_UNUSED.has(v) && !allSrc.includes(`var(${v})`));
-    const pass     = unused.length === 0;
+    const allSrc = allSourceFiles().map(f => {
+      try { return readFileSync(f, 'utf8'); } catch { return ''; }
+    }).join('\n');
+    const unused = declared.filter(v => !KNOWN_UNUSED.has(v) && !allSrc.includes(`var(${v})`));
+    const pass   = unused.length === 0;
+    const scanned = allSourceFiles().length;
     return {
       pass,
       lines: pass
-        ? [`✅ 0 unused vars  (${KNOWN_UNUSED.size} known-unused exempted)`]
-        : [`❌ ${unused.length} unused: ${unused.join(', ')}`],
+        ? [`✅ 0 unused vars  (scanned ${scanned} files; ${KNOWN_UNUSED.size} known-unused exempted)`]
+        : [`❌ ${unused.length} unused (scanned ${scanned} files): ${unused.join(', ')}`],
     };
   }
 
   function computeGate6() {
-    const scanTargets = [THEME, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, f)));
+    const scanTargets = allSourceFiles();
     const scanArgs    = ['-n', '-E'];
 
     const hexR = sh('grep', [
