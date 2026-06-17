@@ -22,7 +22,7 @@
 //                                (requires FIGMA_TOKEN env var; skipped if not set)
 //   [10] State completeness     — all COMPONENT_SET state tokens covered (skips if no data)
 //   [11] Exemption validity     — EXPLICIT/SKIP_TOKENS/COVERED entries not stale in snapshot
-//   [12] Dark mode completeness — all mode-variant tokens adapt between light and dark CSS
+//   [12] Mode completeness      — all mode-variant tokens adapt across every configured mode
 //   [13] CSS naming round-trip  — every theme.css var traces back to a Figma token
 //   [14] Pseudo-element audit   — every ::before/::after with content declared in contract
 //
@@ -720,7 +720,7 @@ async function bootstrapConfig() {
     runScriptAsync('visual-regression-check.mjs'),
     runScriptAsync('state-check.mjs'),
     runScriptAsync('exemption-check.mjs'),
-    runScriptAsync('dark-mode-check.mjs'),
+    runScriptAsync('mode-completeness-check.mjs'),
     runScriptAsync('naming-check.mjs'),
     runScriptAsync('pseudo-element-check.mjs'),
   ]);
@@ -735,7 +735,7 @@ async function bootstrapConfig() {
   addGate('Visual regression  (frames match stored references)',       parseGate9(r9));
   addGate('State completeness  (all COMPONENT_SET states covered)',    parseGeneric(r10, /COVERED|UNCOVERED/));
   addGate('Exemption validity  (EXPLICIT · SKIP_TOKENS · COVERED not stale)', parseGeneric(r11, /VALID|STALE|BROKEN/));
-  addGate('Dark mode completeness  (all mode-variant tokens adapt)',   parseGeneric(r12, /ADAPTS|STATIC|SKIPPED/));
+  addGate('Mode completeness  (all mode-variant tokens adapt across every configured mode)', parseGeneric(r12, /ADAPTS|STATIC|SKIPPED/));
   addGate('CSS naming round-trip  (every var traceable to a Figma token)', parseGeneric(r13, /TRACEABLE|UNINVENTED/));
   addGate('Pseudo-element audit  (::before/::after content declared in contract)', parseGeneric(r14, /DOCUMENTED|UNDOCUMENTED/));
 
