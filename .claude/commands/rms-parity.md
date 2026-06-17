@@ -12,6 +12,7 @@ Full parity workflow in one command. Phase 1 (live Figma refresh) always runs be
 
 **Utility flags (no full audit — just run the script directly):**
 ```bash
+node scripts/audit.mjs --init           # first-time setup only: scaffold config files, then exit
 node scripts/audit.mjs --trend          # show last 20 audit runs + pass/fail trend
 node scripts/parity-check.mjs --fix     # auto-fix sizing/typography divergences in theme.css
 node scripts/setup-webhook.mjs --list   # list registered Figma webhooks for this file
@@ -23,27 +24,30 @@ node scripts/setup-webhook.mjs --list   # list registered Figma webhooks for thi
 
 At the start of every run, read `./ds-config.json` from the project root.
 
-**If it doesn't exist**, ask the user for exactly five things — nothing else:
+**If it doesn't exist** (or `--init` flag is passed), ask the user for exactly four things — nothing else:
 
-1. **Figma file URL** — the full browser URL of the Figma file (e.g. `https://www.figma.com/design/abc123/My-DS`). Extract the file key from the URL: it's the path segment after `/design/` or `/file/`. Never ask for the raw key — accept the URL and parse it.
-2. **Theme CSS path** — the path to `theme.css` relative to the project root (e.g. `packages/ui/src/theme.css`). If you can find exactly one `theme.css` in the project by scanning common locations (`packages/`, `src/`, `app/`), show it as the default and let the user confirm with Enter.
-3. **Is this a consumer file?** *(optional)* — Ask: "Is this a Figma consumer file that uses an external DS library?" If yes, ask for the **DS source Figma URL** (parse `figmaSourceKey` from it). When set, Phase 1 queries both files and value mismatches are cross-checked: code that matches the DS source but not the consumer is flagged as `⏳ PENDING FIGMA SYNC` (not a gate failure). If the user says no or skips, omit `figmaSourceKey`.
-4. **DS frame node IDs** *(optional but recommended)* — the Figma node IDs of the top-level plugin/screen frames that are the live DS designs (e.g. `308-10425`). Find them from the frame's Figma URL (`node-id=308-10425`). Ask for each frame's name and ID. If the user skips this, set `frames: []` and warn: **⚠️ Gates [4] and [9] will not run until frame IDs are added to `ds-config.json → frames`.**
-5. **Figma personal access token** *(optional)* — needed for Gate [9] visual regression screenshots. Get it from Figma → Account settings → Personal access tokens → Generate new token (requires "File content" read scope). If the user skips this, warn: **⚠️ Gate [9] will not run until `FIGMA_TOKEN` is set in `.env`.** Never store the token in `ds-config.json` — write it to `.env` at the project root instead.
+1. **Figma file URL** — the full browser URL of the Figma file. Extract the file key (path segment after `/design/` or `/file/`). Accept URL, never ask for raw key.
+2. **Theme CSS path** — relative path to the token CSS file(s). Auto-scan common locations; show as default if exactly one is found.
+3. **Figma personal access token** *(optional)* — needed for collection auto-detection and Gate [9]. If already in `.env`, use it silently. Write to `.env` if provided. Never store in `ds-config.json`.
+4. **Is this a consumer file?** *(optional)* — if yes, ask for the DS source Figma URL (parse `figmaSourceKey` from it). Enables `⏳ PENDING FIGMA SYNC` cross-check in Gate [2].
+
+**Do not ask for frame node IDs, collection names, or primitive prefixes** — these are either auto-detected or added later.
 
 Then auto-detect and write `ds-config.json`:
 - `snapshotVars` / `snapshotStructure` → sibling files next to theme CSS
 - `pluginCSS` → scan `apps/*/ui.src.html` and `src/ui.src.html`
 - `plugins` → derived from pluginCSS paths
-- `figma.colorCollection` → `"Color"` (default, user can edit later)
-- `figma.sizingCollection` → `"Sizing"` (default)
-- `figma.primitivePrefix` → `"primitives/"` (default)
-- `figma.modes` → Light (`:root`) + Dark (`dark-media`) (default)
-- `frames` → from user input, or `[]` if skipped
+- `figma.colorCollection` / `sizingCollection` / `primitivePrefix` → **queried from Figma API** if token available. Calls `GET /v1/files/:key/variables/local`, inspects every collection's variable types (`COLOR`, `FLOAT`, etc.), variable count, naming patterns, and mode count. The collection with the most `COLOR` vars becomes `colorCollection`; the collection with the most `FLOAT` vars (if distinct) becomes `sizingCollection`; single-mode collections with a dominant path prefix become `primitivePrefix`. Falls back to `"Color"` / `null` / `"primitives/"` only when the token is absent or the call fails.
+- `figma.modes` → Light (`:root`) + Dark (`dark-media`) (default — edit if your DS has more modes)
+- `frames` → `[]` (add frame node IDs manually after setup)
 
-If the user provided a token, write `FIGMA_TOKEN=<token>` to `.env` at the project root.
+Also:
+- Scaffold `parity-map.mjs` from `parity-map.example.mjs` if not present
+- Scaffold `structure-contract.mjs` from `structure-contract.example.mjs` if not present
+- Append `ds-config.json`, `parity-map.mjs`, `structure-contract.mjs`, `.env` to `.gitignore`
+- Print a **next-steps checklist** (frame IDs, primitive scale, component contracts)
 
-Write `ds-config.json` to the project root. Also append `ds-config.json`, `parity-map.mjs`, `structure-contract.mjs`, `.env` to `.gitignore` if not already present. Then continue the audit immediately — do not stop.
+With `--init`: stop after setup (print checklist, exit). Without `--init` and when called because `ds-config.json` was missing: continue the audit immediately.
 
 Once `ds-config.json` exists, extract:
 - `figmaFileKey` — Figma consumer/product file key (the file being audited)
