@@ -254,8 +254,13 @@ function sizingTokenToVar(token) {
 // ── Load snapshot ─────────────────────────────────────────────────────────────
 const snap = JSON.parse(readFileSync(join(ROOT, SNAPSHOT_PATH), 'utf8'));
 
+// Source snapshot (DS library file) — populated by Phase 1 when figmaSourceKey is set.
+// When present, value mismatches are cross-checked: if source matches CSS, the consumer
+// file just has a pending library update → PENDING_FIGMA_SYNC (not a gate failure).
+const sourceSnap = snap.source ?? null;
+
 // ── Accumulators ──────────────────────────────────────────────────────────────
-const FAIL = [], PASS = [], SKIP = [], NEW_SKIP = [], ALIAS_FAIL = [];
+const FAIL = [], PASS = [], SKIP = [], NEW_SKIP = [], ALIAS_FAIL = [], PENDING_FIGMA_SYNC = [];
 const autoFixes = []; // { cssVar, newVal, line } — applied when --fix
 
 // ── 1. COLOR ──────────────────────────────────────────────────────────────────
@@ -292,12 +297,20 @@ for (let modeIdx = 0; modeIdx < MODES.length; modeIdx++) {
       continue;
     }
     if (figmaHex.toLowerCase() !== cssHex.toLowerCase()) {
-      FAIL.push({
-        dimension: 'color', token, cssVar, mode: modeMeta.name,
-        figma: figmaHex, css: cssHex,
-        hint:    `CSS resolves ${cssVar} → ${cssHex} but Figma says ${figmaHex}`,
-        fixHint: colorFixHint(cssVar, figmaHex, modeIdx),
-      });
+      // Cross-check against DS source: if source matches CSS, consumer just has a pending
+      // library update — this is not a code bug. Route to PENDING_FIGMA_SYNC instead of FAIL.
+      const sourceHex = sourceSnap?.[modeMeta.snapshotKey]?.[tokenKey]
+                     ?? sourceSnap?.[modeMeta.snapshotKey]?.[token] ?? null;
+      if (sourceHex && sourceHex.toLowerCase() === cssHex.toLowerCase()) {
+        PENDING_FIGMA_SYNC.push({ token, cssVar, mode: modeMeta.name, consumerFigma: figmaHex, css: cssHex });
+      } else {
+        FAIL.push({
+          dimension: 'color', token, cssVar, mode: modeMeta.name,
+          figma: figmaHex, css: cssHex,
+          hint:    `CSS resolves ${cssVar} → ${cssHex} but Figma says ${figmaHex}`,
+          fixHint: colorFixHint(cssVar, figmaHex, modeIdx),
+        });
+      }
     } else {
       PASS.push(`color ${token}:${modeMeta.snapshotKey}`);
 
@@ -410,6 +423,7 @@ console.log(`⏭  SKIP  ${SKIP.length}`);
 console.log(`⚠️  NEW SKIP  ${NEW_SKIP.length}`);
 console.log(`❌ FAIL  ${FAIL.length}`);
 if (snap.aliases) console.log(`🔗 ALIAS FAIL  ${ALIAS_FAIL.length}  (same hex, wrong primitive chain)`);
+if (sourceSnap)   console.log(`⏳ PENDING FIGMA SYNC  ${PENDING_FIGMA_SYNC.length}  (code matches DS source; consumer file has a pending library update)`);
 
 if (SKIP.length) {
   console.log('\n─── Skipped (expected — each has a documented reason) ─────────');
@@ -438,6 +452,14 @@ if (ALIAS_FAIL.length) {
     console.log(`       Figma chain:      ${a.figmaChain.join(' → ')}`);
     console.log(`       Expected CSS end: ${a.expectedFinalCSSVar}`);
     console.log(`       Actual CSS end:   ${a.actualFinalCSSVar ?? '(no CSS alias chain — hardcoded hex)'}`);
+  }
+}
+if (PENDING_FIGMA_SYNC.length) {
+  console.log('\n─── ⏳ Pending Figma library updates (not failures) ────────────');
+  console.log('   Code matches DS source. Consumer Figma file has a pending library update.');
+  for (const p of PENDING_FIGMA_SYNC) {
+    console.log(`  ⏳ [color/${p.mode}] ${p.token} → ${p.cssVar}`);
+    console.log(`       CSS (matches source): ${p.css}   Consumer Figma: ${p.consumerFigma}`);
   }
 }
 

@@ -23,12 +23,13 @@ node scripts/setup-webhook.mjs --list   # list registered Figma webhooks for thi
 
 At the start of every run, read `./ds-config.json` from the project root.
 
-**If it doesn't exist**, ask the user for exactly four things — nothing else:
+**If it doesn't exist**, ask the user for exactly five things — nothing else:
 
 1. **Figma file URL** — the full browser URL of the Figma file (e.g. `https://www.figma.com/design/abc123/My-DS`). Extract the file key from the URL: it's the path segment after `/design/` or `/file/`. Never ask for the raw key — accept the URL and parse it.
 2. **Theme CSS path** — the path to `theme.css` relative to the project root (e.g. `packages/ui/src/theme.css`). If you can find exactly one `theme.css` in the project by scanning common locations (`packages/`, `src/`, `app/`), show it as the default and let the user confirm with Enter.
-3. **DS frame node IDs** *(optional but recommended)* — the Figma node IDs of the top-level plugin/screen frames that are the live DS designs (e.g. `308-10425`). Find them from the frame's Figma URL (`node-id=308-10425`). Ask for each frame's name and ID. If the user skips this, set `frames: []` and warn: **⚠️ Gates [4] and [9] will not run until frame IDs are added to `ds-config.json → frames`.**
-4. **Figma personal access token** *(optional)* — needed for Gate [9] visual regression screenshots. Get it from Figma → Account settings → Personal access tokens → Generate new token (requires "File content" read scope). If the user skips this, warn: **⚠️ Gate [9] will not run until `FIGMA_TOKEN` is set in `.env`.** Never store the token in `ds-config.json` — write it to `.env` at the project root instead.
+3. **Is this a consumer file?** *(optional)* — Ask: "Is this a Figma consumer file that uses an external DS library?" If yes, ask for the **DS source Figma URL** (parse `figmaSourceKey` from it). When set, Phase 1 queries both files and value mismatches are cross-checked: code that matches the DS source but not the consumer is flagged as `⏳ PENDING FIGMA SYNC` (not a gate failure). If the user says no or skips, omit `figmaSourceKey`.
+4. **DS frame node IDs** *(optional but recommended)* — the Figma node IDs of the top-level plugin/screen frames that are the live DS designs (e.g. `308-10425`). Find them from the frame's Figma URL (`node-id=308-10425`). Ask for each frame's name and ID. If the user skips this, set `frames: []` and warn: **⚠️ Gates [4] and [9] will not run until frame IDs are added to `ds-config.json → frames`.**
+5. **Figma personal access token** *(optional)* — needed for Gate [9] visual regression screenshots. Get it from Figma → Account settings → Personal access tokens → Generate new token (requires "File content" read scope). If the user skips this, warn: **⚠️ Gate [9] will not run until `FIGMA_TOKEN` is set in `.env`.** Never store the token in `ds-config.json` — write it to `.env` at the project root instead.
 
 Then auto-detect and write `ds-config.json`:
 - `snapshotVars` / `snapshotStructure` → sibling files next to theme CSS
@@ -45,7 +46,8 @@ If the user provided a token, write `FIGMA_TOKEN=<token>` to `.env` at the proje
 Write `ds-config.json` to the project root. Also append `ds-config.json`, `parity-map.mjs`, `structure-contract.mjs`, `.env` to `.gitignore` if not already present. Then continue the audit immediately — do not stop.
 
 Once `ds-config.json` exists, extract:
-- `figmaFileKey` — Figma file key
+- `figmaFileKey` — Figma consumer/product file key (the file being audited)
+- `figmaSourceKey` *(optional)* — DS library source file key; when set, Phase 1 queries both files. Mismatches where code matches source but not consumer → `⏳ PENDING FIGMA SYNC` (not a gate failure). Absent = no cross-check.
 - `frames` — array of `{ name, nodeId }` — the DS frame(s) to audit
 - `figma.colorCollection` — name of the color variable collection (e.g. `"Color"`)
 - `figma.sizingCollection` — name of the sizing collection, if any (e.g. `"Sizing"`)
@@ -378,6 +380,17 @@ For every changed or new token:
 ## Phase 1 — Step 5: Update snapshots
 
 Write fresh live data to both files. **Always stamp `_updated` to today's date on both snapshots**, even when no changes were detected — this is what tells Gate [1] the data is fresh. Only overwrite the `typography` section if the text-style capture returned real values (empty capture = keep existing). Always write the `aliases` section from the Phase 1 query — it is used by `parity-check.mjs` to verify CSS var chains route through the correct primitive.
+
+**Consumer file projects (`figmaSourceKey` set):** After querying the consumer file (`figmaFileKey`), also query the DS source file (`figmaSourceKey`) using the same variable script. Write the source results to `figma-vars.snapshot.json` under a `"source"` key alongside the normal `"color"` key. The source data does not replace the consumer data — both are written:
+```json
+{
+  "_updated": "YYYY-MM-DD",
+  "color":  { "light": { ... }, "dark": { ... } },
+  "source": { "light": { ... }, "dark": { ... } },
+  "aliases": { ... }
+}
+```
+`parity-check.mjs` reads `snap.source` automatically and routes mismatches where CSS matches source (but not consumer) to `⏳ PENDING FIGMA SYNC` instead of `❌ FAIL`. Gate [2] only fails on genuine divergences.
 
 > **⚠️ 32k output token limit:** Claude's response (including all tool call parameters) must stay under 32,000 output tokens. A snapshot for a large collection (>300 tokens) cannot be written in a single `Write` call — the JSON content alone exceeds the limit. **Always use the chunked write protocol below for large snapshots.**
 

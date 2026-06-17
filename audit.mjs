@@ -157,11 +157,11 @@ async function bootstrapConfig() {
   }
   console.log('');
 
-  // Ask 2 questions
+  // Ask questions
   const rl  = readline.createInterface({ input: process.stdin, output: process.stdout });
   const ask = (q) => new Promise(res => rl.question(q, res));
 
-  const figmaKey = (await ask('Figma file key (leave blank to skip Gate 9): ')).trim();
+  const figmaKey = (await ask('Figma file URL or file key (leave blank to skip Gate 9): ')).trim();
 
   // Accept comma-separated paths for multi-file token stores
   let themeCSS;
@@ -177,6 +177,18 @@ async function bootstrapConfig() {
     themeCSS = parts.length === 1 ? (parts[0] || 'src/theme.css') : parts;
   }
 
+  // Consumer file check — optional DS source for PENDING_FIGMA_SYNC cross-check
+  let figmaSourceKey = '';
+  const isConsumer = (await ask('Is this a Figma consumer file that uses an external DS library? (y/N): ')).trim().toLowerCase();
+  if (isConsumer === 'y' || isConsumer === 'yes') {
+    const srcUrl = (await ask('DS source Figma URL (paste full browser URL, or leave blank to skip): ')).trim();
+    if (srcUrl) {
+      const m = srcUrl.match(/figma\.com\/(?:design|file)\/([a-zA-Z0-9]+)/);
+      figmaSourceKey = m ? m[1] : srcUrl;
+      console.log(C.dim(`  DS source key: ${figmaSourceKey}`));
+    }
+  }
+
   rl.close();
   console.log('');
 
@@ -186,8 +198,15 @@ async function bootstrapConfig() {
   const snapshotVars     = join(cssDir, 'figma-vars.snapshot.json').replace(/\\/g, '/');
   const snapshotStructure = join(cssDir, 'figma-structure.snapshot.json').replace(/\\/g, '/');
 
+  // Parse file key from URL if user pasted a full URL
+  const figmaFileKey = (() => {
+    const m = figmaKey.match(/figma\.com\/(?:design|file)\/([a-zA-Z0-9]+)/);
+    return m ? m[1] : figmaKey;
+  })();
+
   const generated = {
-    figmaFileKey: figmaKey || '',
+    figmaFileKey: figmaFileKey || '',
+    ...(figmaSourceKey ? { figmaSourceKey } : {}),
     frames: [],
     figma: {
       colorCollection:  'Color',
