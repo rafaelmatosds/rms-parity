@@ -682,8 +682,9 @@ if (REPORT_HTML) {
       ? `${colName}: ${colModes.map(([,n])=>n).join(', ')} · ${localOverrideCol}: ${extraModes.map(([,n])=>n).join(', ')}`
       : allModes.map(([,n])=>n).join(', ');
 
+    const cs = colStats[colName] ?? {total:0,s:0,p:0,t:0,l:0};
     sections += `
-<div class="col-section" data-col="${colName}">
+<div class="col-section" data-col="${colName}" data-counts="${encodeURIComponent(JSON.stringify(cs))}">
   <div class="tw"><table>
     ${theadHtml}
     <tbody>${tbody2}</tbody>
@@ -760,8 +761,9 @@ body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-siz
 .tab-warn{font-size:12px;margin-left:2px;cursor:default}
 /* ── Toolbar ── */
 .toolbar{display:flex;gap:8px;align-items:center;padding:8px 20px;border-bottom:1px solid #e4e7ec;background:#fff;flex-wrap:wrap}
-.fbtn{display:inline-flex;align-items:center;padding:3px 10px;border:1px solid #d1d5db;border-radius:14px;background:#fff;cursor:pointer;font-size:11px;color:#374151;white-space:nowrap}
+.fbtn{display:inline-flex;align-items:center;gap:4px;padding:3px 10px;border:1px solid #d1d5db;border-radius:14px;background:#fff;cursor:pointer;font-size:11px;color:#374151;white-space:nowrap}
 .fbtn:hover{background:#f3f4f6}.fbtn.on{background:#4f46e5;color:#fff;border-color:#4f46e5}
+.fcount{font-weight:700;opacity:.85}.fcount-zero{opacity:.35}
 input{border:1px solid #d1d5db;border-radius:6px;padding:4px 10px;font-size:11px;width:200px;outline:none;margin-left:auto}
 input:focus{border-color:#6366f1}
 .col-info{font-size:10px;color:#888;margin-left:4px}
@@ -822,11 +824,11 @@ tr.hidden{display:none}
   <div class="tabs-hdr">Collections</div>
   <div class="tabs">${tabsHtml}</div>
   <div class="toolbar">
-    <button class="fbtn on" onclick="setF('ALL',this)">All</button>
-    <button class="fbtn" onclick="setF('SYNCED',this)"><span class="dot s"></span>Synced</button>
-    <button class="fbtn" onclick="setF('PENDING',this)"><span class="dot p"></span>Pending</button>
-    <button class="fbtn" onclick="setF('STALE',this)"><span class="dot st"></span>Stale</button>
-    <button class="fbtn" onclick="setF('LOCAL',this)"><span class="dot lo"></span>Local</button>
+    <button class="fbtn on" data-filter="ALL" onclick="setF('ALL',this)">All <span class="fcount" id="fc-all"></span></button>
+    <button class="fbtn" data-filter="SYNCED" onclick="setF('SYNCED',this)"><span class="dot s"></span>Synced <span class="fcount" id="fc-synced"></span></button>
+    <button class="fbtn" data-filter="PENDING" onclick="setF('PENDING',this)"><span class="dot p"></span>Pending <span class="fcount" id="fc-pending"></span></button>
+    <button class="fbtn" data-filter="STALE" onclick="setF('STALE',this)"><span class="dot st"></span>Stale <span class="fcount" id="fc-stale"></span></button>
+    <button class="fbtn" data-filter="LOCAL" onclick="setF('LOCAL',this)"><span class="dot lo"></span>Local <span class="fcount" id="fc-local"></span></button>
     <span class="col-info" id="col-info"></span>
     <input type="text" id="q" placeholder="Search token…" oninput="apply()">
   </div>
@@ -834,6 +836,19 @@ tr.hidden{display:none}
 <div id="main">${sections}</div>
 <script>
 let af='ALL', activeCol='${firstCol}';
+function updateFilterCounts(){
+  const sec=document.querySelector('.col-section[data-col="'+activeCol+'"]');
+  if(!sec)return;
+  let cs={total:0,s:0,p:0,t:0,l:0};
+  try{cs=JSON.parse(decodeURIComponent(sec.dataset.counts||'{}'));}catch{}
+  const map={all:cs.total,synced:cs.s,pending:cs.p,stale:cs.t,local:cs.l};
+  for(const[k,n] of Object.entries(map)){
+    const el=document.getElementById('fc-'+k);
+    if(!el)continue;
+    el.textContent=n;
+    el.classList.toggle('fcount-zero',n===0);
+  }
+}
 function switchTab(col, btn){
   activeCol=col;
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
@@ -845,6 +860,7 @@ function switchTab(col, btn){
   af='ALL';
   document.querySelectorAll('.fbtn').forEach(b=>b.classList.remove('on'));
   document.querySelectorAll('.fbtn')[0].classList.add('on');
+  updateFilterCounts();
   apply();
   stickyHead();
 }
@@ -890,6 +906,7 @@ window.addEventListener('scroll',stickyHead,{passive:true});
 document.addEventListener('DOMContentLoaded',()=>{
   const first=document.querySelector('.col-section');
   if(first)first.classList.add('active');
+  updateFilterCounts();
   apply();
   stickyHead();
 });
