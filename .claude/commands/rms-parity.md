@@ -838,7 +838,7 @@ node consumer-audit.mjs --file GfHErcAjjw277iPunsZXCU --report-md consumer-token
 
 Run from the **DS project root** (where `ds-config.json` and `figma-vars.snapshot.json` live).
 
-> **Rate limiting**: The Figma Variables API (`/v1/files/:key/variables/local`) can return 400 after rapid successive calls. If this happens, regenerate the HTML directly from the existing markdown report — no API call needed (see "Regenerate HTML" above).
+> **Caching**: The script caches the Figma API response to `consumer-vars-cache.<fileKey>.json` after the first successful fetch. Subsequent runs read from the cache (no API call). Pass `--fresh` to force a new API fetch. The cache file is per consumer file key and should be gitignored.
 
 ## Prerequisites
 

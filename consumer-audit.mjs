@@ -46,6 +46,7 @@ const mdArgIdx   = process.argv.indexOf('--report-md');
 const REPORT_MD  = mdArgIdx  !== -1 ? process.argv[mdArgIdx  + 1] : null;
 const htmlArgIdx = process.argv.indexOf('--report-html');
 const REPORT_HTML = htmlArgIdx !== -1 ? process.argv[htmlArgIdx + 1] : null;
+const FRESH = process.argv.includes('--fresh');
 
 // ── Load ds-config.json ───────────────────────────────────────────────────────
 let cfg = {};
@@ -94,24 +95,41 @@ for (const mode of MODES) {
 const snapDate = snap._updated ?? 'unknown';
 console.log(`\n📐 DS snapshot (${snapDate}): ${dsTokenNames.size} component tokens`);
 
-// ── Fetch consumer file variables ─────────────────────────────────────────────
-console.log(`\n🔍 Fetching variables from consumer file: ${CONSUMER_KEY}\n`);
+// ── Fetch consumer file variables (with cache) ────────────────────────────────
+const CACHE_PATH = join(ROOT, `consumer-vars-cache.${CONSUMER_KEY}.json`);
+let data;
 
-const url = `https://api.figma.com/v1/files/${CONSUMER_KEY}/variables/local`;
-const res = await fetch(url, { headers: { 'X-Figma-Token': FIGMA_TOKEN } });
-if (res.status === 404) {
-  console.error('❌ Consumer file not found (404). Check file key and token access.');
-  process.exit(1);
+if (!FRESH && existsSync(CACHE_PATH)) {
+  data = JSON.parse(readFileSync(CACHE_PATH, 'utf8'));
+  const age = Math.round((Date.now() - (data._cachedAt ?? 0)) / 60000);
+  console.log(`\n📦 Using cached variables (${age}m old). Pass --fresh to re-fetch.\n`);
+} else {
+  console.log(`\n🔍 Fetching variables from consumer file: ${CONSUMER_KEY}\n`);
+  const url = `https://api.figma.com/v1/files/${CONSUMER_KEY}/variables/local`;
+  const res = await fetch(url, { headers: { 'X-Figma-Token': FIGMA_TOKEN } });
+  if (res.status === 404) {
+    console.error('❌ Consumer file not found (404). Check file key and token access.');
+    process.exit(1);
+  }
+  if (res.status === 403) {
+    console.error('❌ Access denied (403). Token needs "File content: Read" scope.');
+    process.exit(1);
+  }
+  if (!res.ok) {
+    console.error(`❌ Figma API error: ${res.status} ${res.statusText}`);
+    if (existsSync(CACHE_PATH)) {
+      console.log('⚠️  Falling back to cached data (may be stale).');
+      data = JSON.parse(readFileSync(CACHE_PATH, 'utf8'));
+    } else {
+      process.exit(1);
+    }
+  } else {
+    data = await res.json();
+    data._cachedAt = Date.now();
+    writeFileSync(CACHE_PATH, JSON.stringify(data));
+    console.log(`✅ Fetched and cached to consumer-vars-cache.${CONSUMER_KEY}.json\n`);
+  }
 }
-if (res.status === 403) {
-  console.error('❌ Access denied (403). Token needs "File content: Read" scope.');
-  process.exit(1);
-}
-if (!res.ok) {
-  console.error(`❌ Figma API error: ${res.status} ${res.statusText}`);
-  process.exit(1);
-}
-const data = await res.json();
 
 const consumerCollections = Object.values(data.meta?.variableCollections ?? {});
 const consumerVariables   = Object.values(data.meta?.variables ?? {});
@@ -242,9 +260,25 @@ if (REPORT_MD) {
   }
   function resolveVal(val, modeId) {
     if (val == null) return '—';
+    // Walk the full alias chain
     if (typeof val === 'object' && val.type === 'VARIABLE_ALIAS') {
-      const alias = byId[val.id];
-      return alias ? `→ ${alias.name}` : '(alias→ext)';
+      let cur = val; let depth = 0; const chain = [];
+      while (typeof cur === 'object' && cur?.type === 'VARIABLE_ALIAS' && depth++ < 10) {
+        const v = byId[cur.id];
+        if (!v) return `(ext alias)`;
+        chain.push(v.name);
+        cur = v.valuesByMode?.[modeId] ?? Object.values(v.valuesByMode ?? {})[0];
+      }
+      // cur is now the concrete value; resolve it
+      if (cur != null && typeof cur === 'object' && 'r' in cur) {
+        const h = toHex(cur); const a = cur.a ?? 1;
+        const suffix = a < 0.999 ? ` @${Math.round(a*100)}%` : '';
+        return `${h}${suffix} (→ ${chain[chain.length-1]})`;
+      }
+      if (typeof cur === 'number') return `${Math.round(cur*100)/100} (→ ${chain[chain.length-1]})`;
+      if (typeof cur === 'boolean') return `${cur} (→ ${chain[chain.length-1]})`;
+      if (typeof cur === 'string') return `${cur} (→ ${chain[chain.length-1]})`;
+      return `→ ${chain[chain.length-1]}`;
     }
     if (typeof val === 'object' && 'r' in val) {
       const h = toHex(val);
@@ -342,16 +376,29 @@ if (REPORT_MD) {
 // ── HTML full token report (--report-html) ────────────────────────────────────
 if (REPORT_HTML) {
   function _toHex(c){ return '#'+['r','g','b'].map(k=>Math.round((c[k]??0)*255).toString(16).padStart(2,'0')).join(''); }
-  function _resolveVal(val){
+  function _toConcrete(val, modeId, depth=0) {
+    if (depth > 10 || val == null) return {concrete: null, aliasName: null};
+    if (typeof val === 'object' && val.type === 'VARIABLE_ALIAS') {
+      const v = byId[val.id];
+      if (!v) return {concrete: null, aliasName: null, ext: true};
+      const next = v.valuesByMode?.[modeId] ?? Object.values(v.valuesByMode ?? {})[0];
+      const inner = _toConcrete(next, modeId, depth + 1);
+      return {...inner, aliasName: inner.aliasName ?? v.name};
+    }
+    return {concrete: val, aliasName: null};
+  }
+  function _resolveVal(val, modeId){
     if(val==null) return {display:'—',hex:null};
     if(typeof val==='object'&&val.type==='VARIABLE_ALIAS'){
-      const a=byId[val.id]; return a?{display:`→ ${a.name}`,hex:null}:{display:'(ext)',hex:null};
+      const {concrete, aliasName, ext} = _toConcrete(val, modeId);
+      if (ext || concrete == null) return {display: aliasName ? `→ ${aliasName}` : '(ext)', hex:null};
+      const inner = _resolveVal(concrete, modeId);
+      return {...inner, aliasOf: aliasName};
     }
     if(typeof val==='object'&&'r' in val){
       const h=_toHex(val);
       const alpha = val.a??1;
-      const hasOpacity = alpha < 0.999;
-      const opacityPct = hasOpacity ? Math.round(alpha*100) : null;
+      const opacityPct = alpha < 0.999 ? Math.round(alpha*100) : null;
       return {display:h, hex:h, alpha, opacityPct};
     }
     if(typeof val==='number') return {display:String(Math.round(val*100)/100),hex:null};
@@ -396,7 +443,7 @@ if (REPORT_HTML) {
       modeVals[mode.modeId] = {
         modeName: mode.name,
         colName:  col.name,
-        ...(val !== undefined ? _resolveVal(val) : {display:'—',hex:null}),
+        ...(val !== undefined ? _resolveVal(val, mode.modeId) : {display:'—',hex:null}),
       };
     }
 
@@ -462,8 +509,9 @@ if (REPORT_HTML) {
   function valCell(v, span=1){
     const colspan = span > 1 ? ` colspan="${span}"` : '';
     if(!v||v.display==='—') return `<td class="val empty"${colspan}>—</td>`;
+    const aliasTip = v.aliasOf ? ` title="aliased from: ${v.aliasOf}"` : '';
     const inner = v.hex
-      ? `${sw(v.hex,v.fromDS,v.alpha)}<code class="hex">${v.display}</code>${v.opacityPct!=null?`<span class="opacity-badge">${v.opacityPct}%</span>`:''}`
+      ? `${sw(v.hex,v.fromDS,v.alpha)}<code class="hex"${aliasTip}>${v.display}</code>${v.opacityPct!=null?`<span class="opacity-badge">${v.opacityPct}%</span>`:''} ${v.aliasOf?`<span class="alias-tag">↩ ${v.aliasOf.split('/').pop()}</span>`:''}`
       : `<code class="noncolor">${v.display}</code>`;
     return `<td class="val"${colspan}>${inner}</td>`;
   }
@@ -573,6 +621,7 @@ td.val .sw{display:inline-block;width:13px;height:13px;border-radius:3px;vertica
 code.hex{font-size:11px;color:#1e1e2e;vertical-align:middle}
 code.noncolor{font-size:11px;color:#444;background:#f4f4f8;border:1px solid #e0e0ea;border-radius:3px;padding:1px 5px}
 .opacity-badge{font-size:10px;color:#6b21a8;background:#f3e8ff;border:1px solid #d8b4fe;border-radius:4px;padding:1px 5px;margin-left:4px;vertical-align:middle;font-weight:500}
+.alias-tag{font-size:10px;color:#0369a1;background:#e0f2fe;border:1px solid #bae6fd;border-radius:4px;padding:1px 5px;vertical-align:middle;max-width:140px;overflow:hidden;text-overflow:ellipsis;display:inline-block;white-space:nowrap}
 td.empty{color:#ddd;font-size:11px;padding:4px 10px}
 .badge{padding:2px 6px;border-radius:8px;font-size:10px;font-weight:600;white-space:nowrap}
 .badge.synced{background:#dcfce7;color:#166534}.badge.pending{background:#fef9c3;color:#854d0e}
