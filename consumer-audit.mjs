@@ -495,6 +495,7 @@ if (REPORT_HTML) {
       modeVals[mode.modeId] = {
         modeName: mode.name,
         colName:  col.name,
+        colSize:  col.variableIds?.length ?? 0,
         ...(val !== undefined ? _resolveVal(val, mode.modeId) : {display:'—',hex:null}),
       };
     }
@@ -544,7 +545,8 @@ if (REPORT_HTML) {
     if (colIsRemote.get(r.colName) && colRowCount.get(r.colName) <= 5) continue;
     if (!colMap.has(r.colName)) colMap.set(r.colName, new Map());
     for (const [mid, mv] of Object.entries(r.modeVals))
-      colMap.get(r.colName).set(mid, mv.modeName);
+      if ((mv.colSize ?? 999) > 5)
+        colMap.get(r.colName).set(mid, mv.modeName);
   }
 
   const nS  = hRows.filter(r=>r.status==='SYNCED').length;
