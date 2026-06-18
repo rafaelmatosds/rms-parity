@@ -820,15 +820,25 @@ A consumer file is a Figma product file (e.g. a client project) that uses the DS
 ## Usage
 
 ```bash
+# Console summary only:
 node consumer-audit.mjs --file <consumerFileKey>
-# Example:
-node consumer-audit.mjs --file GfHErcAjjw277iPunsZXCU
 
-# Full token master list with per-mode values (markdown):
+# + Full token table as markdown:
 node consumer-audit.mjs --file GfHErcAjjw277iPunsZXCU --report-md consumer-token-status.md
+
+# + Interactive HTML report (filterable, searchable, color swatches):
+node consumer-audit.mjs --file GfHErcAjjw277iPunsZXCU --report-md consumer-token-status.md --report-html consumer-token-parity.html
+
+# Regenerate HTML from existing markdown (no API call — use when rate-limited):
+# Parse consumer-token-status.md directly and write the HTML. Read the md file,
+# split by section headers (## ✅ SYNCED / ## ⏳ PENDING UPDATE / ## 🗑 STALE),
+# parse each | token | type | Light | Dark | row, then build the HTML using the
+# template in consumer-audit.mjs --report-html. This avoids a second API call.
 ```
 
 Run from the **DS project root** (where `ds-config.json` and `figma-vars.snapshot.json` live).
+
+> **Rate limiting**: The Figma Variables API (`/v1/files/:key/variables/local`) can return 400 after rapid successive calls. If this happens, regenerate the HTML directly from the existing markdown report — no API call needed (see "Regenerate HTML" above).
 
 ## Prerequisites
 
@@ -842,28 +852,33 @@ Run from the **DS project root** (where `ds-config.json` and `figma-vars.snapsho
 3. Classifies collections by `remote` flag:
    - `remote: false` → local collection (consumer's brand overrides)
    - `remote: true`  → linked library collection (the DS)
-4. Diffs DS snapshot tokens against the consumer's local collection.
-5. Reports: tokens missing from the consumer's local collection, grouped by component.
+4. Diffs DS snapshot tokens against consumer's linked library copy + DS snapshot.
+5. Reports: tokens in each status, grouped by component prefix.
 
 ## Output
 
-- Console report grouped by component prefix with count of missing tokens.
-- `consumer-audit-report.json` at project root (gitignored) — full machine-readable output.
-- `--report-md <file>` — full master token table with Type + per-mode values for every token.
+| Flag | Output |
+|---|---|
+| *(none)* | Console report grouped by component with counts |
+| `--report-md <file>` | Full master token table (markdown) — all types, all modes |
+| `--report-html <file>` | Interactive HTML — filterable by status, searchable, color swatches, grouped by component |
+| *(always)* | `consumer-audit-report.json` — machine-readable lists for CI integration |
 
-### Variable value display in `--report-md`
+### Variable value display
 
-The markdown report resolves all variable types:
+All variable types are resolved and shown in both `--report-md` and `--report-html`:
 
 | Figma type | Display |
 |---|---|
-| COLOR | `#rrggbb` hex |
+| COLOR | `#rrggbb` hex + color swatch |
 | FLOAT | numeric value (rounded to 2 decimal places) |
 | BOOLEAN | `true` / `false` |
 | STRING | string value |
 | VARIABLE_ALIAS | `→ alias/token/name` (one hop — shows what it aliases) |
 
-Mode columns are derived from the linked DS collection's actual mode names (e.g. `Light`, `Dark`). If the consumer has no linked var for a token (PENDING_UPDATE or STALE-only-in-local), values fall back to the local collection's modes.
+Mode columns are derived from the linked DS collection's actual mode names (e.g. `Light`, `Dark`).
+
+**PENDING tokens** show the DS snapshot value with a `*(DS)*` suffix — so you can see what value the consumer will receive once the library update is accepted.
 
 ## Interpreting results
 
@@ -871,8 +886,8 @@ Mode columns are derived from the linked DS collection's actual mode names (e.g.
 |---|---|---|
 | ✅ SYNCED | Token in DS snapshot AND in consumer's linked library | No action needed |
 | ⏳ PENDING UPDATE | Token in DS snapshot but missing from consumer's linked library | Consumer must accept the DS library update in Figma → Assets → Libraries |
-| 🗑 STALE | Token not in DS snapshot (removed from DS), still in consumer's linked copy | Disappears automatically when consumer accepts library update |
-| No remote collections found | Consumer may not use this DS as a library, OR `FIGMA_TOKEN` lacks access to the linked lib | Verify in Figma → Assets → Libraries; check token scope |
+| 🗑 STALE | Token removed from DS, still in consumer's old linked copy | Disappears automatically when consumer accepts library update |
+| No remote collections found | Consumer may not use this DS as a library, OR `FIGMA_TOKEN` lacks access | Verify in Figma → Assets → Libraries; check token scope |
 
 ## ⚠️ Hard rule: never infer library linkage from component names
 
