@@ -598,27 +598,33 @@ try { COMP_PROPS = JSON.parse(readFileSync(join(ROOT, COMP_PROPS_SNAP_PATH), 'ut
 
 const CPROP_PASS = [], CPROP_FAIL = [], CPROP_WARN = [];
 
-// Discovery: flag component sets with BOOLEAN/VARIANT props but no propertyMap
-const mappedFigmaNames = new Set(
-  Object.values(CONTRACT)
-    .filter(c => c.propertyMap)
-    .map((c, i, arr) => {
-      const key = Object.keys(CONTRACT)[i];
-      return c.figmaName ?? key;
-    })
-);
-// Re-derive properly since Object.values loses keys
+// Figma property keys include internal node IDs as suffixes: "Show Label#958:0"
+// Strip them so propertyMap authors use clean names: "Show Label"
+function normPropName(k) { return k.replace(/#[\d:]+$/, '').trim(); }
+
+// Build lookup: figmaName → CONTRACT key (for components in CONTRACT)
+const figmaNameToContractKey = {};
 for (const [key, c] of Object.entries(CONTRACT)) {
-  if (c.propertyMap) mappedFigmaNames.add(c.figmaName ?? key);
+  figmaNameToContractKey[c.figmaName ?? key] = key;
 }
 
+// Discovery: for each component that IS in CONTRACT but has no propertyMap,
+// warn if the Figma component set has BOOLEAN or VARIANT properties.
 for (const [figmaName, entry] of Object.entries(COMP_PROPS)) {
   if (figmaName === '_updated' || !entry?.properties) continue;
+  const contractKey = figmaNameToContractKey[figmaName];
+  if (!contractKey) continue; // not in CONTRACT — informational only, don't warn
+  if (CONTRACT[contractKey]?.propertyMap) continue; // already mapped
   const hasBehavioural = Object.values(entry.properties).some(
     p => p.type === 'BOOLEAN' || p.type === 'VARIANT'
   );
-  if (hasBehavioural && !mappedFigmaNames.has(figmaName)) {
-    CPROP_WARN.push(`${figmaName}: has Figma component properties but no propertyMap in CONTRACT`);
+  if (hasBehavioural) {
+    CPROP_WARN.push(`${contractKey}: in CONTRACT but has no propertyMap — ${
+      Object.entries(entry.properties)
+        .filter(([, d]) => d.type === 'BOOLEAN' || d.type === 'VARIANT')
+        .map(([k]) => normPropName(k))
+        .join(', ')
+    }`);
   }
 }
 
@@ -633,11 +639,16 @@ for (const [comp, contract] of Object.entries(CONTRACT)) {
     continue;
   }
 
-  // Coverage: warn about Figma BOOLEAN/VARIANT props missing from propertyMap
-  for (const [propName, propDef] of Object.entries(figmaEntry.properties)) {
-    if (propDef.type === 'TEXT' || propDef.type === 'INSTANCE_SWAP') continue;
-    if (!(propName in contract.propertyMap)) {
-      CPROP_WARN.push(`${comp}/${propName}: Figma ${propDef.type} property not in propertyMap`);
+  // Build normalized property lookup from snapshot
+  const figmaProps = Object.fromEntries(
+    Object.entries(figmaEntry.properties).map(([k, v]) => [normPropName(k), v])
+  );
+
+  // Coverage: warn about BOOLEAN/VARIANT props not in propertyMap (use normalized names)
+  for (const [normName, propDef] of Object.entries(figmaProps)) {
+    if (propDef.type === 'TEXT' || propDef.type === 'INSTANCE_SWAP' || propDef.type === 'SLOT') continue;
+    if (!(normName in contract.propertyMap)) {
+      CPROP_WARN.push(`${comp}/${normName}: Figma ${propDef.type} property not in propertyMap`);
     }
   }
 
