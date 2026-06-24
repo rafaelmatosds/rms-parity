@@ -626,15 +626,28 @@ Every Figma annotation attached to a component node is a design specification. T
 // in structure-contract.mjs
 someComponent: {
   annotations: {
-    'Exact annotation label from Figma': 'css-selector', // selector verified to exist in CSS
-    'Another annotation label':          null,            // prose-only — acknowledged, no CSS to verify
+    // Selector existence — just verifies the rule exists
+    'Another annotation label': 'css-selector',
+
+    // Property assertion — verifies a specific property uses the right token
+    'Background must match surface': { sel: '.myComp', prop: 'background', expectedVar: '--area-bg' },
+
+    // Exact value assertion
+    'Must be transparent': { sel: '.myComp::after', prop: 'content', expected: 'none' },
+
+    // Prose-only — acknowledged, nothing to verify in CSS
+    'Accessibility note': null,
   },
   propertyMap: { /* ... */ },
 },
 ```
 
-- **`'css-selector'`** — the annotation drives a CSS implementation. The selector string must appear in the compiled CSS. Use this when the annotation specifies a visual behavior (e.g. background, layout, color inheritance).
-- **`null`** — the annotation is prose-only guidance (e.g. accessibility notes, copy constraints). Acknowledged but no CSS required.
+- **`'css-selector'`** — selector must exist in the compiled CSS. Minimum check — only use when existence alone is enough.
+- **`{ sel, prop, expectedVar }`** — verifies that `sel`'s `prop` uses `var(--expectedVar[, fallback])`. Use this for token-driven properties like `background`, `color`, `gap`. Catches wrong token even if the selector exists.
+- **`{ sel, prop, expected }`** — verifies an exact CSS value (e.g. `'none'`, `'transparent'`). Use for non-token assertions.
+- **`null`** — prose-only guidance (e.g. accessibility notes, copy constraints). Acknowledged but no CSS required.
+
+**Prefer `{ sel, prop, expectedVar }` over a plain selector** whenever the annotation specifies a visual property — it's the only form that would have caught `background: var(--bg)` being wrong while `.dividerSection` still existed.
 
 ### Reading annotations correctly
 

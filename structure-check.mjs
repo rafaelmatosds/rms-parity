@@ -727,9 +727,28 @@ for (const [figmaName, entry] of Object.entries(COMP_PROPS)) {
     }
     const mapping = contractAnns[annLabel];
     if (!mapping) { CANN_PASS.push(`${contractKey}/${annLabel} (prose — acknowledged)`); continue; }
-    const found = findBlock(allCss, mapping, allIndex) !== null || allCss.includes(mapping);
-    if (found) CANN_PASS.push(`${contractKey}/${annLabel}`);
-    else CANN_FAIL.push(`${contractKey}/${annLabel}: "${mapping}" not found in CSS`);
+    const label = `${contractKey}/${annLabel}`;
+    if (typeof mapping === 'string') {
+      // Simple selector existence check
+      const found = findBlock(allCss, mapping, allIndex) !== null || allCss.includes(mapping);
+      if (found) CANN_PASS.push(label);
+      else CANN_FAIL.push(`${label}: "${mapping}" not found in CSS`);
+    } else if (typeof mapping === 'object' && mapping.sel && mapping.prop) {
+      // Property-level assertion: { sel, prop, expectedVar } or { sel, prop, expected }
+      const block = findBlock(allCss, mapping.sel, allIndex);
+      if (!block) { CANN_FAIL.push(`${label}: selector "${mapping.sel}" not found in CSS`); continue; }
+      const propRe = new RegExp('(?<![a-zA-Z-])' + mapping.prop.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '\\s*:\\s*([^;\\n]+)');
+      const pm = block.match(propRe);
+      const fullVal = pm ? pm[1].trim() : null;
+      if (mapping.expectedVar) {
+        const varPat = new RegExp(`var\\(${mapping.expectedVar.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}[,)]`);
+        if (fullVal && varPat.test(fullVal)) CANN_PASS.push(label);
+        else CANN_FAIL.push(`${label}: "${mapping.sel}" ${mapping.prop} uses "${fullVal ?? '(not set)'}" — expected var(${mapping.expectedVar}[,)])`);
+      } else if (mapping.expected !== undefined) {
+        if (fullVal === mapping.expected) CANN_PASS.push(label);
+        else CANN_FAIL.push(`${label}: "${mapping.sel}" ${mapping.prop} is "${fullVal ?? '(not set)'}" — expected "${mapping.expected}"`);
+      }
+    }
   }
 }
 
