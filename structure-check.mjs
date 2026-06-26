@@ -133,7 +133,28 @@ function selectorExists(css, selector) {
 
 // ── 1. Snapshot vs CONTRACT ───────────────────────────────────────────────────
 const components = snap.components ?? {};
+const UNIMPLEMENTED_SET = new Set(cfg.knownUnimplementedComponents ?? []);
 const FAIL = [], PASS = [], MISSING = [];
+const UNCONTRACTED = []; // DS components absent from both contract and knownUnimplementedComponents
+
+// Load component-props snapshot to get the authoritative list of all DS components.
+// Build a set of all Figma component names covered by the contract (including figmaName aliases).
+const CONTRACTED_FIGMA_NAMES = new Set([
+  ...Object.keys(CONTRACT),
+  ...Object.values(CONTRACT).map(e => e.figmaName).filter(Boolean),
+]);
+const COMP_PROPS_PATH = cfg.paths?.compPropsSnapshot;
+if (COMP_PROPS_PATH) {
+  try {
+    const compProps = JSON.parse(readFileSync(join(ROOT, COMP_PROPS_PATH), 'utf8'));
+    for (const name of Object.keys(compProps)) {
+      if (name.startsWith('_')) continue;
+      if (CONTRACTED_FIGMA_NAMES.has(name) || UNIMPLEMENTED_SET.has(name)) continue;
+      UNCONTRACTED.push(name);
+    }
+  } catch { /* optional */ }
+}
+
 const SCALAR_FIELDS = ['h', 'gapVar', 'fontSizeVar', 'fontWeightVar', 'fillStructure', 'innerRadiusVar', 'strokeOnDefault'];
 
 // A CONTRACT entry is "structural" if it declares at least one structural field.
@@ -790,7 +811,16 @@ if (Object.keys(COMP_PROPS).length > 0) {
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log(`\n✅ PASS  ${PASS.length}/${Object.keys(CONTRACT).length} components (structure)`);
 console.log(`❌ FAIL  ${FAIL.length} field(s)`);
-if (MISSING.length) console.log(`❓ MISSING from snapshot: ${MISSING.join(', ')}`);
+if (MISSING.length) {
+  console.log(`❌ MISSING from snapshot (${MISSING.length}): ${MISSING.join(', ')}`);
+  console.log(`   Add these to figma-structure.snapshot.json (inspect via Figma plugin API)`);
+  console.log(`   or to knownUnimplementedComponents in ds-config.json.`);
+}
+if (UNCONTRACTED.length) {
+  console.log(`❌ NOT IN CONTRACT (${UNCONTRACTED.length}): ${UNCONTRACTED.join(', ')}`);
+  console.log(`   These DS components have no structure-contract.mjs entry and are NOT exempted.`);
+  console.log(`   Add them to CONTRACT + figma-structure.snapshot.json, or to knownUnimplementedComponents.`);
+}
 if (extra.length)   console.log(`🆕 In snapshot, not in contract: ${extra.join(', ')}`);
 
 if (FAIL.length) {
@@ -943,7 +973,7 @@ if (CANN_UNDOC.length > 0) {
   console.log('   Consider adding a Figma annotation to document why this behavior exists.');
 }
 
-const anyFail = FAIL.length > 0 || MISSING.length > 0 || CSS_FAIL.length > 0
+const anyFail = FAIL.length > 0 || MISSING.length > 0 || UNCONTRACTED.length > 0 || CSS_FAIL.length > 0
              || VAR_FAIL.length > 0 || SELECTOR_FAIL.length > 0 || PROP_FAIL.length > 0
              || PHANTOM_FAIL.length > 0 || PILL_FAIL.length > 0
              || BSIDES_FAIL.length > 0 || ASSERT_FAIL.length > 0 || CHILD_FAIL.length > 0
