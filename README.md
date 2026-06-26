@@ -33,6 +33,7 @@ Invoke `/rms-figma-code-parity` in any project to run a full parity check: Phase
 | [12] | `mode-completeness-check.mjs` | **Do all modes actually adapt?** Verifies that every token that's supposed to change between modes actually does — nothing accidentally stuck at the same value across modes that are meant to differ. |
 | [13] | `naming-check.mjs` | **Do all CSS variable names trace back to a real Figma token?** Makes sure nobody invented a CSS variable that has no counterpart in the design system. |
 | [14] | `pseudo-element-check.mjs` | **Are decorative `::before` / `::after` elements documented?** Any visual element added via CSS pseudo-elements must be declared in the component's structure contract so it doesn't silently drift from the design. |
+| [15] | `icon-check.mjs` | **Are all SVG symbols documented and correctly implemented?** Every `<symbol>` in plugin HTML files must be declared in `ICON_SYMBOLS` in `structure-contract.mjs` as either a DS icon (with Figma node ID) or a plugin-specific icon. Also verifies DS icons that require a rotation wrapper have the correct `<g transform>`, and that every icon is rendered at the DS-specified pixel size. |
 
 **Everything is read-only.** No source file is ever modified automatically. The only exception is `node scripts/parity-check.mjs --fix`, which must be invoked explicitly and only rewrites sizing/typography literal values.
 
