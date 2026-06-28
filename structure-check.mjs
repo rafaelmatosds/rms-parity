@@ -74,11 +74,36 @@ const cssFiles  = [THEME_PATH, ...PLUGIN_CSS].filter(f => existsSync(join(ROOT, 
 const allCss    = cssFiles.map(f => readFileSync(join(ROOT, f), 'utf8').replace(/\/\*[\s\S]*?\*\//g, '')).join('\n');
 
 // Build block indexes once — findBlock() uses these for O(1) lookups
+// lightCSS strips @media blocks so dark-mode overrides can't shadow light-mode entries.
+// Gate [3c] (CSS_BASE_RULE_VARS) uses lightIndex; all other gates use themeIndex.
+const lightCSS   = themeCSS ? stripAtRules(themeCSS) : null;
 const themeIndex = themeCSS ? buildBlockIndex(themeCSS) : null;
+const lightIndex = lightCSS ? buildBlockIndex(lightCSS) : null;
 const allIndex   = buildBlockIndex(allCss);
 
 // ── CSS utility helpers ───────────────────────────────────────────────────────
 // Both helpers take an explicit css string so they work on themeCSS or allCss.
+
+// stripAtRules — remove @media/@supports/@layer blocks (including nested braces)
+// so buildBlockIndex only indexes light-mode (top-level) rules.
+// Dark-mode overrides inside @media blocks would otherwise overwrite earlier entries.
+function stripAtRules(css) {
+  let result = '';
+  let depth = 0;
+  let inAt = false;
+  for (let i = 0; i < css.length; i++) {
+    if (!inAt && /^@(?:media|supports|layer|keyframes)/.test(css.slice(i))) {
+      while (i < css.length && css[i] !== '{') i++;
+      depth = 1; inAt = true;
+    } else if (inAt) {
+      if (css[i] === '{') depth++;
+      else if (css[i] === '}' && --depth === 0) inAt = false;
+    } else {
+      result += css[i];
+    }
+  }
+  return result;
+}
 
 // buildBlockIndex — parse CSS once into Map<normalizedSelector → blockContent>.
 // Handles flat rules only (no nested braces). Called once per CSS source on load;
@@ -120,14 +145,15 @@ function findBlock(css, selector, index) {
 }
 
 function extractPropVar(block, prop) {
-  const re = new RegExp('(?<![a-zA-Z-])' + prop + '\\s*:\\s*(var\\(--[\\w-]+\\)|[^;\\n]+)');
+  const re = new RegExp('(?<![a-zA-Z-])' + prop + '\\s*:\\s*([^;\\n]+)');
   const m  = block?.match(re);
   if (!m) return null;
   const val = m[1].trim();
-  const vm = val.match(/^var\((--[\w-]+)/);       // direct var()
-  if (vm) return vm[1];
-  const embedded = val.match(/var\((--[\w-]+)/);  // var() inside color-mix() etc.
-  return embedded ? embedded[1] : null;
+  const allVars = [...val.matchAll(/var\((--[\w-]+)/g)].map(v => v[1]);
+  if (!allVars.length) return null;
+  // For 'border' shorthand (width style color), the color var is always the last var().
+  // For all other properties, the first var() is the expected one.
+  return prop === 'border' ? allVars[allVars.length - 1] : allVars[0];
 }
 
 function selectorExists(css, selector) {
@@ -231,9 +257,9 @@ if (themeCSS) {
 // ── 3. CSS base-rule var bindings ─────────────────────────────────────────────
 const VAR_FAIL = [], VAR_PASS = [];
 
-if (themeCSS) {
+if (lightCSS) {
   for (const rule of CSS_BASE_RULE_VARS) {
-    const block = findBlock(themeCSS, rule.selector, themeIndex);
+    const block = findBlock(lightCSS, rule.selector, lightIndex);
     if (!block) { VAR_FAIL.push(`${rule.key}: selector "${rule.selector}" not found`); continue; }
     const usedVar = extractPropVar(block, rule.prop);
     if (!usedVar) VAR_FAIL.push(`${rule.key}: "${rule.prop}" not set in "${rule.selector}"`);
