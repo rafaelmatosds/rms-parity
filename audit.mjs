@@ -1018,7 +1018,7 @@ async function bootstrapConfig() {
   // ── Summary table ─────────────────────────────────────────────────────────────
   const GATE_PLAIN = [
     'Figma snapshots are up to date',
-    'Token values match Figma (color, sizing, typography)',
+    'Token values match Figma (color, radius, gap, padding, stroke, typography)',
     'Component structure matches Figma (layout, spacing, bindings)',
     'Every DS token bound in Figma is implemented in CSS',
     'No unused CSS variables or hardcoded values',
@@ -1031,8 +1031,8 @@ async function bootstrapConfig() {
     'Pseudo-elements and SVG symbols are documented in the contract',
   ];
   const GATE_PLAN_RISK = {
-    1: 'Risk: if DS component structure changed since the last committed snapshot, Gate [3] may pass against outdated data and miss new or renamed tokens.',
-    4: 'Risk: if DS frames were updated since the last committed snapshot, newly bound or removed token bindings will not be detected.',
+    1: 'Risk: if DS component structure changed since the last committed snapshot, Gate [3] may pass against outdated data and miss new or renamed tokens. Fix: run /rms-figma-code-parity — Phase 1 Step 1c refreshes this via Plugin API on any plan.',
+    4: 'Risk: if DS frames were updated since the last committed snapshot, newly bound or removed token bindings will not be detected. Fix: run /rms-figma-code-parity — Phase 1 Step 1d refreshes this via Plugin API on any plan.',
   };
   const COL1 = 6, COL2 = 52;
   const tRow = (num, label, result) => {
@@ -1066,19 +1066,21 @@ async function bootstrapConfig() {
   if (planLimitedGates.length) {
     const PLAN_NOTES = {
       1: [
-        'The structure snapshot (figma-structure.snapshot.json) could not be refreshed.',
-        'Figma\'s Variables REST API — used to fetch component structure from the DS file —',
-        'is only available on the Enterprise plan. The last committed snapshot was used instead.',
-        'If DS components changed since then, Gate [3] may pass against outdated data.',
-        'Fix: run the Plugin API fallback in Figma, save the result, commit, and re-run.',
+        'The structure snapshot (figma-structure.snapshot.json) could not be auto-refreshed.',
+        'Auto-refresh uses the Figma Variables REST API, which requires an Enterprise plan.',
+        'The last committed snapshot was used instead — if DS component structure changed',
+        'since it was committed, Gate [3] may pass against outdated data.',
+        'Fix: run /rms-figma-code-parity — Phase 1 Step 1c refreshes this via Plugin API',
+        'on any plan. After running, commit the new snapshot file.',
       ],
       4: [
-        'The bound-token list (bound-tokens.json) could not be refreshed.',
-        'This file maps every DS frame node to the variables bound to it. Refreshing it',
-        'requires the Variables REST API, which is Enterprise-only. Coverage was checked',
-        'against the last committed snapshot — if DS frames were updated since then,',
-        'newly bound or unbound tokens will not be detected.',
-        'Fix: run the Plugin API fallback in Figma, save the result, commit, and re-run.',
+        'The bound-token list (bound-tokens.json) could not be auto-refreshed.',
+        'This file maps every DS frame node to the Figma variables bound to it.',
+        'Auto-refresh uses the Figma Variables REST API (Enterprise-only). Coverage was',
+        'checked against the last committed snapshot — if DS frames changed since then,',
+        'newly bound or removed token bindings will not be detected.',
+        'Fix: run /rms-figma-code-parity — Phase 1 Step 1d refreshes this via Plugin API',
+        'on any plan. After running, commit the new bound-tokens.json file.',
       ],
     };
     console.log(C.yellow('  ⏭  PLAN-LIMITED GATES — what this means:\n'));

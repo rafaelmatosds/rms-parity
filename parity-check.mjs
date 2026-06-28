@@ -423,7 +423,7 @@ if (FIX_MODE && autoFixes.length > 0) {
 }
 
 // ── Report ────────────────────────────────────────────────────────────────────
-console.log(`\n✅ PASS  ${PASS.length}   (color + sizing + typography)`);
+console.log(`\n✅ PASS  ${PASS.length}   (color · radius · gap · padding · stroke · typography)`);
 console.log(`⏭  SKIP  ${SKIP.length}`);
 console.log(`⚠️  NEW SKIP  ${NEW_SKIP.length}`);
 console.log(`❌ FAIL  ${FAIL.length}`);
