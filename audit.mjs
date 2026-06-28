@@ -1016,10 +1016,24 @@ async function bootstrapConfig() {
   });
 
   // ── Summary table ─────────────────────────────────────────────────────────────
-  const COL1 = 6, COL2 = 50, COL3 = 12;
+  const GATE_PLAIN = [
+    'Figma snapshots are up to date',
+    'Token values match Figma (color, sizing, typography)',
+    'Component structure matches Figma (layout, spacing, bindings)',
+    'Every DS token bound in Figma is implemented in CSS',
+    'No unused CSS variables or hardcoded values',
+    'Child components are not overridden by parent CSS rules',
+    'Visual output matches stored Figma frame screenshots',
+    'All component states are covered, wired, and in the right selector',
+    'All documented exceptions are still valid',
+    'Every token that changes between modes is handled in CSS',
+    'Every CSS variable maps back to a real Figma token',
+    'Pseudo-elements and SVG symbols are documented in the contract',
+  ];
+  const COL1 = 6, COL2 = 52;
   const tRow = (num, label, result) => {
     const icon = result === 'plan' ? C.yellow('⏭') : result ? C.green('✅') : C.red('❌');
-    const status = result === 'plan' ? C.yellow('Plan limited') : result ? C.green('Pass') : C.red('Fail');
+    const status = result === 'plan' ? C.yellow('Not verified (plan)') : result ? C.green('Pass') : C.red('Fail');
     const n = `[${num}]`.padEnd(COL1);
     const l = label.length > COL2 ? label.slice(0, COL2 - 1) + '…' : label.padEnd(COL2);
     return `  ${icon}  ${n}${l}${status}`;
@@ -1029,7 +1043,8 @@ async function bootstrapConfig() {
   console.log(C.bold('─'.repeat(WIDTH)));
   gates.forEach((g, i) => {
     const result = g.planLimited ? 'plan' : g.pass;
-    console.log(tRow(i + 1, g.label, result));
+    const plainLabel = GATE_PLAIN[i] ?? g.label;
+    console.log(tRow(i + 1, plainLabel, result));
   });
   console.log();
 
