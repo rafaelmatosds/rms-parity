@@ -51,9 +51,9 @@ const WIDTH      = 60;
 const SHOW_TREND = process.argv.includes('--trend');
 const INIT_ONLY  = process.argv.includes('--init');
 
-// Set to true when variables/local returns 403. Gates that depend on live Figma
-// data (snapshot freshness, bound-token coverage) hard-fail when this is set —
-// a 403 means missing token scopes or wrong plan, not a safe fallback.
+// Set to true when variables/local returns 403 (Figma Enterprise plan required).
+// Gates that depend on live variable refresh use planLimited state instead of
+// pass/fail — they don't block the audit but clearly explain what couldn't run.
 let _figmaApiLimited = false;
 
 // ── ANSI helpers (available before config loads) ──────────────────────────────
@@ -669,23 +669,33 @@ async function bootstrapConfig() {
     if (r.status === null) return { pass: true, lines: ['⏭ bound-check.mjs not found — skipped'] };
     const out = r.stdout + r.stderr;
     if (r.status === 2) {
+      // bound-tokens.json is missing entirely — always a hard fail regardless of plan
       return {
         pass: false,
         lines: [
           C.red('❌ HARD FAIL — bound-tokens.json missing.'),
           _figmaApiLimited
-            ? C.red('   variables/local returned 403 — check FIGMA_TOKEN scopes (needs file_variables:read).')
+            ? C.red('   Variables REST API requires Enterprise plan — generate via Plugin API and commit.')
             : C.red('   Set FIGMA_TOKEN and ensure ds-config.json has frames[] to auto-generate it.'),
         ],
       };
     }
     if (_figmaApiLimited) {
-      // 403 means live refresh failed — bound-tokens.json may be stale; hard-fail so stale data never silently passes.
+      // bound-tokens.json exists (committed) but wasn't refreshed — coverage check ran against committed snapshot
+      const pass       = r.status === 0;
+      const summary    = out.split('\n').filter(l => /COVERED|UNCOVERED/.test(l) && l.trim()).map(l => l.trim());
+      const failDetails = pass ? [] : out.split('\n').filter(l => l.trim().startsWith('❌')).map(l => '  ' + l.trim()).slice(0, 20);
+      if (!pass) {
+        // Real coverage failures even against committed snapshot are still failures
+        return { pass: false, lines: [...summary, ...failDetails] };
+      }
       return {
-        pass: false,
+        pass: true,
+        planLimited: true,
         lines: [
-          C.red('❌ HARD FAIL — variables/local returned 403; bound-tokens.json was NOT refreshed.'),
-          C.red('   Check FIGMA_TOKEN scopes (needs file_variables:read). Fix the token and re-run.'),
+          C.yellow('⚠️  Variables REST API requires Enterprise plan — bound-tokens.json not refreshed'),
+          C.yellow('   Coverage checked against committed snapshot (may be stale if frames changed)'),
+          ...summary,
         ],
       };
     }
@@ -724,8 +734,11 @@ async function bootstrapConfig() {
   }
 
   function combineGates(...results) {
+    const allPass = results.every(r => r.pass || r.planLimited);
+    const anyPlanLimited = results.some(r => r.planLimited);
     return {
       pass: results.every(r => r.pass),
+      planLimited: allPass && anyPlanLimited,
       lines: results.flatMap(r => r.lines),
     };
   }
@@ -752,25 +765,28 @@ async function bootstrapConfig() {
     if (vars === null) {
       lines.push(C.red(`${SNAP_VARS} missing — run /rms-parity Phase 1`)); warn = true;
     } else if (vars > 24) {
-      lines.push(C.yellow(`⚠️  ${SNAP_VARS} is ${vars}h old${_figmaApiLimited ? ' (variables/local 403 — check FIGMA_TOKEN scopes)' : ''}`));
+      lines.push(C.yellow(`⚠️  ${SNAP_VARS} is ${vars}h old${_figmaApiLimited ? ' (Variables REST API not available on this plan)' : ''}`));
       warn = true;
     } else {
       lines.push(`${SNAP_VARS} ✓ (updated today)`);
     }
 
+    let structPlanLimited = false;
     if (struct === null) {
       lines.push(C.red(`${SNAP_STRUCT} missing — run /rms-parity Phase 1`)); warn = true;
     } else if (struct > 24) {
-      lines.push(C.yellow(`⚠️  ${SNAP_STRUCT} is ${struct}h old${_figmaApiLimited ? ' (variables/local 403 — check FIGMA_TOKEN scopes)' : ''}`));
-      warn = true;
+      if (_figmaApiLimited) {
+        lines.push(C.yellow(`⚠️  ${SNAP_STRUCT} is ${struct}h old — not refreshed (Variables REST API requires Enterprise plan)`));
+        structPlanLimited = true;
+      } else {
+        lines.push(C.yellow(`⚠️  ${SNAP_STRUCT} is ${struct}h old`));
+        warn = true;
+      }
     } else {
       lines.push(`${SNAP_STRUCT} ✓ (updated today)`);
     }
 
-    // bound-tokens.json is committed as a snapshot and updated via REST (when available)
-    // or Plugin API (when REST returns 403). Gate [4] uses the committed file on CI.
-    // Gate [10] / component-state-tokens.json is still auto-generated each run.
-    return { pass: !warn, lines };
+    return { pass: !warn && !structPlanLimited, planLimited: !warn && structPlanLimited, lines };
   }
 
   function computeGate5() {
@@ -931,7 +947,8 @@ async function bootstrapConfig() {
   let anyFail  = false;
 
   function addGate(label, result) {
-    if (!result.pass) anyFail = true;
+    // planLimited gates are neutral — they don't block the audit
+    if (!result.pass && !result.planLimited) anyFail = true;
     gates.push({ label, ...result });
   }
 
@@ -988,8 +1005,11 @@ async function bootstrapConfig() {
   console.log(C.bold(`  PARITY AUDIT  ·  ${today}`));
   console.log(C.bold('─'.repeat(WIDTH)) + '\n');
 
+  const planLimitedGates = [];
   gates.forEach((g, i) => {
-    const icon = g.pass ? C.green('✅') : C.red('❌');
+    let icon;
+    if (g.planLimited) { icon = C.yellow('⏭ '); planLimitedGates.push(i + 1); }
+    else icon = g.pass ? C.green('✅') : C.red('❌');
     console.log(`${icon}  [${i + 1}] ${C.bold(g.label)}`);
     for (const line of g.lines || []) console.log(`       ${line}`);
     console.log();
@@ -1001,6 +1021,12 @@ async function bootstrapConfig() {
   } else {
     console.log(C.bold(C.green('\n  ALL GATES PASS ✅\n')));
   }
+  if (planLimitedGates.length) {
+    console.log(C.yellow(`  ⏭  Gate(s) [${planLimitedGates.join(', ')}] were not verified — Figma Variables REST API`));
+    console.log(C.yellow('     requires Enterprise plan. Token refresh was skipped; committed snapshots'));
+    console.log(C.yellow('     were used where available. Upgrade plan or use the Plugin API fallback'));
+    console.log(C.yellow('     to generate a fresh snapshot, then commit and re-run.\n'));
+  }
   console.log('─'.repeat(WIDTH) + '\n');
 
   // ── Write parity history ──────────────────────────────────────────────────────
@@ -1008,12 +1034,13 @@ async function bootstrapConfig() {
   let hist = [];
   try { hist = JSON.parse(readFileSync(histPath, 'utf8')); } catch {}
   hist.push({
-    date:      today,
-    timestamp: new Date().toISOString(),
-    pass:      gates.filter(g => g.pass).length,
-    fail:      gates.filter(g => !g.pass).length,
-    total:     gates.length,
-    gates:     gates.map(g => ({ label: g.label, pass: g.pass })),
+    date:        today,
+    timestamp:   new Date().toISOString(),
+    pass:        gates.filter(g => g.pass && !g.planLimited).length,
+    planLimited: gates.filter(g => g.planLimited).length,
+    fail:        gates.filter(g => !g.pass && !g.planLimited).length,
+    total:       gates.length,
+    gates:       gates.map(g => ({ label: g.label, pass: g.pass, planLimited: g.planLimited ?? false })),
   });
   if (hist.length > 100) hist = hist.slice(-100);
   try { writeFileSync(histPath, JSON.stringify(hist, null, 2) + '\n'); } catch {}
