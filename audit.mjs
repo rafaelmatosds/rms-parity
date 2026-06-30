@@ -1019,7 +1019,26 @@ async function bootstrapConfig() {
       return true;
     });
 
-    const hits = [...new Set([...hexHits, ...numHits, ...vwHits])];
+    // Pass 4 — hand-drawn SVG icons via CSS background-image (gate6ExcludeDirs does NOT apply here).
+    // A `data:image/svg+xml` background-image with a literal or %-encoded color is a hand-drawn
+    // icon bypassing the DS icon sprite (`<use href="#icon-X">`) and its `currentColor`/var() token
+    // binding entirely — invisible to gates [13]/[15] since it's not markup, just a CSS string.
+    // Legitimate uses (e.g. native <select> arrows, which cannot host inline <svg><use> markup)
+    // must be documented in ds-config.json → knownHardcodedExceptions.
+    const svgUriR = sh('grep', ['-n', '-E', 'data:image/svg\\+xml', ...allFiles]);
+    const svgUriHits = (svgUriR.stdout || '').split('\n').filter(l => {
+      if (!l.trim()) return false;
+      const code = l.replace(/^[^:]+:\d+:\s*/, '');
+      const hasHardcodedColor = /%23[0-9a-fA-F]{3,8}|#[0-9a-fA-F]{3,8}\b|stroke=(%27|')(?!currentColor)[^%27'#]+|fill=(%27|')(?!currentColor|none)[^%27'#]+/.test(code);
+      if (!hasHardcodedColor) return false;
+      if (KNOWN_FS_EXCEPTS.some(e => {
+        if (typeof e === 'string') return l.includes(e);
+        return (!e.file || l.includes(e.file)) && (!e.pattern || new RegExp(e.pattern).test(code));
+      })) return false;
+      return true;
+    });
+
+    const hits = [...new Set([...hexHits, ...numHits, ...vwHits, ...svgUriHits])];
     const pass  = hits.length === 0;
     return {
       pass,
