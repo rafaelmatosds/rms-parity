@@ -98,7 +98,30 @@ function fingerprint(html) {
     icons.push({ context: ctx, icon: um[1] });
   }
 
-  return { ids, components, icons };
+  // Button inner structure — catches spurious text labels, extra spans, or missing icons.
+  // For each <button id="X"> with a static (non-template) ID, record:
+  //   svg   : whether the button directly contains <svg>
+  //   spans : class names on any <span> children (sorted)
+  //   text  : visible text content after stripping tags (trimmed)
+  // A change here (e.g. adding <span class="tab-label">Tree</span>) fails the gate.
+  const buttonContent = [];
+  const btnRe = /<button\b([^>]*)>([\s\S]*?)<\/button>/gi;
+  let bm;
+  while ((bm = btnRe.exec(static_html)) !== null) {
+    const btnAttrs = bm[1];
+    const inner    = bm[2];
+    const idM      = /\bid="([^"]+)"/.exec(btnAttrs);
+    if (!idM) continue;
+    const btnId = idM[1];
+    if (/["'+${}]/.test(btnId)) continue; // skip JS-template IDs
+    const hasSvg = /<svg\b/i.test(inner);
+    const spans  = [...inner.matchAll(/<span\b[^>]*\bclass="([^"]*)"[^>]*>/gi)]
+      .map(m => m[1].trim()).sort();
+    const text   = inner.replace(/<[^>]+>/g, '').replace(/\s+/g, ' ').trim();
+    buttonContent.push({ id: btnId, svg: hasSvg, spans, text });
+  }
+
+  return { ids, components, icons, buttonContent };
 }
 
 // ── Load existing snapshot ────────────────────────────────────────────────────
@@ -153,13 +176,15 @@ for (const plugin of plugins) {
     continue;
   }
 
-  const idDiff   = diffArrays('ids',        prev.ids,        curr.ids);
-  const compDiff = diffArrays('components', prev.components, curr.components);
-  const iconDiff = diffArrays('icons',      prev.icons,      curr.icons);
+  const idDiff   = diffArrays('ids',           prev.ids,           curr.ids);
+  const compDiff = diffArrays('components',    prev.components,    curr.components);
+  const iconDiff = diffArrays('icons',         prev.icons,         curr.icons);
+  const btnDiff  = diffArrays('buttonContent', prev.buttonContent ?? [], curr.buttonContent ?? []);
 
   const hasDiff = idDiff.added.length || idDiff.removed.length ||
                   compDiff.added.length || compDiff.removed.length ||
-                  iconDiff.added.length || iconDiff.removed.length;
+                  iconDiff.added.length || iconDiff.removed.length ||
+                  btnDiff.added.length  || btnDiff.removed.length;
 
   if (!hasDiff) {
     console.log(`✅ [15] ${plugin}: structure unchanged`);
@@ -169,12 +194,14 @@ for (const plugin of plugins) {
   pass = false;
   console.log(`❌ [15] ${plugin}: structure changed`);
 
-  if (idDiff.added.length)   console.log(`       + ids:        ${idDiff.added.join(', ')}`);
-  if (idDiff.removed.length) console.log(`       - ids:        ${idDiff.removed.join(', ')}`);
-  if (compDiff.added.length)   console.log(`       + components: ${compDiff.added.map(c => JSON.stringify(c)).join(', ')}`);
-  if (compDiff.removed.length) console.log(`       - components: ${compDiff.removed.map(c => JSON.stringify(c)).join(', ')}`);
-  if (iconDiff.added.length)   console.log(`       + icons:      ${iconDiff.added.map(c => JSON.stringify(c)).join(', ')}`);
-  if (iconDiff.removed.length) console.log(`       - icons:      ${iconDiff.removed.map(c => JSON.stringify(c)).join(', ')}`);
+  if (idDiff.added.length)   console.log(`       + ids:           ${idDiff.added.join(', ')}`);
+  if (idDiff.removed.length) console.log(`       - ids:           ${idDiff.removed.join(', ')}`);
+  if (compDiff.added.length)   console.log(`       + components:   ${compDiff.added.map(c => JSON.stringify(c)).join(', ')}`);
+  if (compDiff.removed.length) console.log(`       - components:   ${compDiff.removed.map(c => JSON.stringify(c)).join(', ')}`);
+  if (iconDiff.added.length)   console.log(`       + icons:        ${iconDiff.added.map(c => JSON.stringify(c)).join(', ')}`);
+  if (iconDiff.removed.length) console.log(`       - icons:        ${iconDiff.removed.map(c => JSON.stringify(c)).join(', ')}`);
+  if (btnDiff.added.length)    console.log(`       + btnContent:   ${btnDiff.added.map(c => JSON.stringify(c)).join(', ')}`);
+  if (btnDiff.removed.length)  console.log(`       - btnContent:   ${btnDiff.removed.map(c => JSON.stringify(c)).join(', ')}`);
 }
 
 if (!pass) {

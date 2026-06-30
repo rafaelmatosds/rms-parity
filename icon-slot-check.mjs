@@ -96,4 +96,39 @@ for (const entry of ICON_USAGES) {
   }
 }
 
+// ── Exhaustiveness: every <button id="X"> with a direct icon child must be declared ──
+// This catches slots that were added to the HTML but never registered in ICON_USAGES.
+// Without exhaustiveness a developer can introduce a wrong icon in a new undeclared slot
+// and Gate [13] will silently pass — it only verifies what's already in the contract.
+const declaredByPlugin = {};
+for (const e of ICON_USAGES) {
+  (declaredByPlugin[e.plugin] ??= new Set()).add(e.selector);
+}
+
+for (const [plugin, srcPath] of Object.entries(pluginToSrc)) {
+  const absPath = join(ROOT, srcPath);
+  if (!existsSync(absPath)) continue;
+  const html     = readFileSync(absPath, 'utf8');
+  const declared = declaredByPlugin[plugin] ?? new Set();
+
+  const btnRe = /<button\b([^>]*)>([\s\S]*?)<\/button>/gi;
+  let bm;
+  while ((bm = btnRe.exec(html)) !== null) {
+    const btnAttrs = bm[1];
+    const inner    = bm[2];
+    const idM      = /\bid="([^"]+)"/.exec(btnAttrs);
+    if (!idM) continue;
+    const btnId = idM[1];
+    if (/["'+${}]/.test(btnId)) continue; // skip JS-template IDs
+    const useM = /<use\s+href="#(icon-[^"]+)"/.exec(inner);
+    if (!useM) continue; // no direct icon child
+
+    const sel = `#${btnId}`;
+    if (!declared.has(sel)) {
+      console.log(`❌ [13] ${plugin} ${sel}: undeclared icon slot — uses "${useM[1]}" but missing from ICON_USAGES`);
+      pass = false;
+    }
+  }
+}
+
 process.exit(pass ? 0 : 1);
