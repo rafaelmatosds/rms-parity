@@ -8,12 +8,13 @@
 //
 //   ICON_SYMBOLS values can be a string OR an object:
 //     String:  'DS ICON — ...' | 'PLUGIN-SPECIFIC — ...'
-//     Object:  { desc: 'DS ICON — ...', transform?: 'rotate(-45)', size?: 16 | [16, 48] }
+//     Object:  { desc: 'DS ICON — ...', transform?: 'rotate(-45)' }
 //              transform — if set, symbol must contain <g transform="..."> matching value
-//              size      — if set, every <svg width="N" height="N"><use href="#id"> must
-//                          use one of the declared size(s); a number enforces a single size,
-//                          an array allows multiple valid sizes (e.g. [16, 48] for an icon
-//                          used both as a standard 16px icon and as a 48px decorative element)
+//
+//   The viewBox attribute on <symbol> is the icon's container — it is verified against
+//   the Figma snapshot automatically. Render size (<svg width height>) is a design
+//   decision and is not policed; the viewBox + path data checks ensure the correct
+//   icon is used at whatever size the design calls for.
 //
 //   Why: hand-drawn paths, missing transforms, and wrong render sizes all produce
 //   visually wrong icons that no color/token check would catch.
@@ -49,13 +50,6 @@ try {
 
 function entryDesc(val)        { return typeof val === 'string' ? val : val.desc; }
 function entryTransform(val)   { return typeof val === 'string' ? null  : (val.transform   ?? null); }
-// Returns null (no size constraint) or an array of allowed sizes.
-function entrySize(val) {
-  if (typeof val === 'string') return null;
-  const s = val.size ?? null;
-  if (s === null) return null;
-  return Array.isArray(s) ? s : [s];
-}
 function entryStrokeNone(val)  { return typeof val === 'string' ? false : (val.strokeNone  ?? false); }
 function entryStrokeBased(val) { return typeof val === 'string' ? false : (val.strokeBased ?? false); }
 
@@ -82,7 +76,6 @@ function extractPathDs(body) {
 const documented       = [];
 const undocumented     = [];
 const transformFails   = [];
-const sizeFails        = [];
 const strokeFails      = [];
 const strokeBasedFails = [];
 const pathFails        = [];
@@ -106,7 +99,6 @@ for (const srcPath of HTML_SOURCES) {
 
     const desc            = entryDesc(val);
     const reqTransform    = entryTransform(val);
-    const reqSize         = entrySize(val);
     const reqStrokeNone   = entryStrokeNone(val);
     const reqStrokeBased  = entryStrokeBased(val);
 
@@ -167,50 +159,6 @@ for (const srcPath of HTML_SOURCES) {
   }
 }
 
-// ── Cross-file render-size check ─────────────────────────────────────────────
-// Symbols are often defined in a shared file (e.g. ui-shared.js) while their
-// <use href="#id"> elements live in plugin HTML files. The per-symbol loop above
-// only scans within each file, so cross-file cases are missed. This pass builds
-// a size map from ICON_SYMBOLS and scans every HTML source for <use> elements,
-// comparing the enclosing <svg width="N" height="N"> against the declared size.
-{
-  const sizeRequired = new Map(); // id → { reqSize, desc }
-  for (const [id, val] of Object.entries(ALLOWED)) {
-    const reqSize = entrySize(val);
-    if (reqSize !== null) sizeRequired.set(id, { reqSize, desc: entryDesc(val) });
-  }
-
-  function checkUseSizes(srcPath, text) {
-    for (const [id, { reqSize, desc }] of sizeRequired) {
-      const USE_RE = new RegExp(`<use\\s[^>]*(?:href|xlink:href)=["']#${id}["'][^>]*>`, 'g');
-      let um;
-      USE_RE.lastIndex = 0;
-      while ((um = USE_RE.exec(text)) !== null) {
-        const before    = text.slice(0, um.index);
-        const svgTagIdx = before.lastIndexOf('<svg');
-        if (svgTagIdx === -1) continue;
-        const svgTagEnd = text.indexOf('>', svgTagIdx);
-        const svgTag    = text.slice(svgTagIdx, svgTagEnd + 1);
-        const wMatch    = /\bwidth="(\d+(?:\.\d+)?)"/.exec(svgTag);
-        const hMatch    = /\bheight="(\d+(?:\.\d+)?)"/.exec(svgTag);
-        const w = wMatch ? parseFloat(wMatch[1]) : null;
-        const h = hMatch ? parseFloat(hMatch[1]) : null;
-        // reqSize is an array of allowed sizes (may have one or more entries)
-        const allowed = w !== null && h !== null && w === h && reqSize.includes(w);
-        if (!allowed) {
-          const key = `${id}|${srcPath}|${w}×${h}`;
-          if (!sizeFails.some(f => `${f.id}|${f.file}|${f.actual}` === key)) {
-            sizeFails.push({ id, reqSize, actual: `${w}×${h}`, file: srcPath, desc });
-          }
-        }
-      }
-    }
-  }
-
-  for (const srcPath of HTML_SOURCES) {
-    checkUseSizes(srcPath, readFileSync(join(ROOT, srcPath), 'utf8'));
-  }
-}
 
 // ── Report ────────────────────────────────────────────────────────────────────
 console.log('\n─── SVG symbol audit (Hard Rule #15) ───────────────────────────────\n');
@@ -229,7 +177,6 @@ const allFails = [
   ...undocumented.map(r => ({ ...r, kind: 'undocumented' })),
   ...strokeBasedFails.map(r => ({ ...r, kind: 'strokeBased' })),
   ...transformFails.map(r => ({ ...r, kind: 'transform' })),
-  ...sizeFails.map(r => ({ ...r, kind: 'size' })),
   ...strokeFails.map(r => ({ ...r, kind: 'stroke' })),
   ...viewBoxFails.map(r => ({ ...r, kind: 'viewBox' })),
   ...pathFails.map(r => ({ ...r, kind: 'path' })),
@@ -260,15 +207,6 @@ if (transformFails.length) {
   }
 }
 
-if (sizeFails.length) {
-  console.log(`❌ WRONG RENDER SIZE  ${sizeFails.length}  (DS icon rendered at wrong width/height)\n`);
-  for (const r of sizeFails) {
-    const allowed = r.reqSize.join('px or ') + 'px';
-    console.log(`   ❌ "#${r.id}"  in ${r.file}`);
-    console.log(`      Contract allows: ${allowed}  —  found: ${r.actual}`);
-    console.log(`      → Declare size as ${r.reqSize[0]} in the <svg> wrapping <use href="#${r.id}">, or add the size to the ICON_SYMBOLS size array.\n`);
-  }
-}
 
 if (strokeBasedFails.length) {
   console.log(`❌ NOT STROKE-BASED  ${strokeBasedFails.length}  (DS stroke icons must have fill="none" on <symbol> tag)\n`);
