@@ -8,10 +8,12 @@
 //
 //   ICON_SYMBOLS values can be a string OR an object:
 //     String:  'DS ICON — ...' | 'PLUGIN-SPECIFIC — ...'
-//     Object:  { desc: 'DS ICON — ...', transform?: 'rotate(-45)', size?: 16 }
+//     Object:  { desc: 'DS ICON — ...', transform?: 'rotate(-45)', size?: 16 | [16, 48] }
 //              transform — if set, symbol must contain <g transform="..."> matching value
 //              size      — if set, every <svg width="N" height="N"><use href="#id"> must
-//                          use that exact width/height; catches icons rendered at wrong size
+//                          use one of the declared size(s); a number enforces a single size,
+//                          an array allows multiple valid sizes (e.g. [16, 48] for an icon
+//                          used both as a standard 16px icon and as a 48px decorative element)
 //
 //   Why: hand-drawn paths, missing transforms, and wrong render sizes all produce
 //   visually wrong icons that no color/token check would catch.
@@ -47,7 +49,13 @@ try {
 
 function entryDesc(val)        { return typeof val === 'string' ? val : val.desc; }
 function entryTransform(val)   { return typeof val === 'string' ? null  : (val.transform   ?? null); }
-function entrySize(val)        { return typeof val === 'string' ? null  : (val.size        ?? null); }
+// Returns null (no size constraint) or an array of allowed sizes.
+function entrySize(val) {
+  if (typeof val === 'string') return null;
+  const s = val.size ?? null;
+  if (s === null) return null;
+  return Array.isArray(s) ? s : [s];
+}
 function entryStrokeNone(val)  { return typeof val === 'string' ? false : (val.strokeNone  ?? false); }
 function entryStrokeBased(val) { return typeof val === 'string' ? false : (val.strokeBased ?? false); }
 
@@ -172,8 +180,6 @@ for (const srcPath of HTML_SOURCES) {
     if (reqSize !== null) sizeRequired.set(id, { reqSize, desc: entryDesc(val) });
   }
 
-  const iconSizeExceptions = cfg.knownIconSizeExceptions ?? [];
-
   function checkUseSizes(srcPath, text) {
     for (const [id, { reqSize, desc }] of sizeRequired) {
       const USE_RE = new RegExp(`<use\\s[^>]*(?:href|xlink:href)=["']#${id}["'][^>]*>`, 'g');
@@ -189,11 +195,9 @@ for (const srcPath of HTML_SOURCES) {
         const hMatch    = /\bheight="(\d+(?:\.\d+)?)"/.exec(svgTag);
         const w = wMatch ? parseFloat(wMatch[1]) : null;
         const h = hMatch ? parseFloat(hMatch[1]) : null;
-        if (w !== reqSize || h !== reqSize) {
-          const isExempt = iconSizeExceptions.some(
-            e => e.id === id && e.file === srcPath && e.size === w && e.size === h
-          );
-          if (isExempt) continue;
+        // reqSize is an array of allowed sizes (may have one or more entries)
+        const allowed = w !== null && h !== null && w === h && reqSize.includes(w);
+        if (!allowed) {
           const key = `${id}|${srcPath}|${w}×${h}`;
           if (!sizeFails.some(f => `${f.id}|${f.file}|${f.actual}` === key)) {
             sizeFails.push({ id, reqSize, actual: `${w}×${h}`, file: srcPath, desc });
@@ -259,9 +263,10 @@ if (transformFails.length) {
 if (sizeFails.length) {
   console.log(`❌ WRONG RENDER SIZE  ${sizeFails.length}  (DS icon rendered at wrong width/height)\n`);
   for (const r of sizeFails) {
+    const allowed = r.reqSize.join('px or ') + 'px';
     console.log(`   ❌ "#${r.id}"  in ${r.file}`);
-    console.log(`      Contract requires: ${r.reqSize}×${r.reqSize}  —  found: ${r.actual}`);
-    console.log(`      → The DS component specifies a ${r.reqSize}px container. Update the <svg width="${r.reqSize}" height="${r.reqSize}"> that wraps <use href="#${r.id}">.\n`);
+    console.log(`      Contract allows: ${allowed}  —  found: ${r.actual}`);
+    console.log(`      → Declare size as ${r.reqSize[0]} in the <svg> wrapping <use href="#${r.id}">, or add the size to the ICON_SYMBOLS size array.\n`);
   }
 }
 
