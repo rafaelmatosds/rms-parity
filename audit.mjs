@@ -1136,7 +1136,7 @@ async function bootstrapConfig() {
   const _g7 = computeGate7();
 
   // Subprocess gates — all launch concurrently
-  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rHtmlStructure, rTransition] = await Promise.all([
+  const [rParity, rStructure, rBound, rIsolation, rVisual, rState, rExemption, rMode, rNaming, rPseudo, rIcon, rStateBinding, rStateVar, rIconSlot, rComponentSlot, rHtmlStructure, rTransition, rIconFreshness] = await Promise.all([
     runScriptAsync('parity-check.mjs', ['--json']),
     runScriptAsync('structure-check.mjs'),
     runScriptAsync('bound-check.mjs'),
@@ -1154,6 +1154,7 @@ async function bootstrapConfig() {
     runScriptAsync('component-slot-check.mjs'),
     runScriptAsync('html-structure-check.mjs'),
     runScriptAsync('transition-check.mjs'),
+    runScriptAsync('icon-freshness-check.mjs'),
   ]);
 
   addGate('Freshness  (snapshots · build output)',
@@ -1188,6 +1189,8 @@ async function bootstrapConfig() {
     parseGeneric(rHtmlStructure, /✅|❌/));
   addGate('Transition contract  (duration · easing · property per DS selector)',
     parseGeneric(rTransition, /✅|❌/));
+  addGate('Icon snapshot freshness  (DS icon paths match live Figma export)',
+    parseGeneric(rIconFreshness, /MATCH|CHANGED/));
 
   // ── Final report ──────────────────────────────────────────────────────────────
   console.log('\n' + C.bold('─'.repeat(WIDTH)));
@@ -1222,6 +1225,7 @@ async function bootstrapConfig() {
     'Every declared component slot uses the correct DS component class',
     'HTML structure (ids, component classes, icon refs) matches the stored snapshot',
     'All CSS transitions match the documented duration and easing contract',
+    'DS icon SVG paths in snapshot match live Figma export',
   ];
   const GATE_PLAN_RISK = {
     1: 'Risk: if DS component structure changed since the last committed snapshot, Gate [3] may pass against outdated data and miss new or renamed tokens. Fix: run /rms-figma-code-parity — Phase 1 Step 1c refreshes this via Plugin API on any plan.',

@@ -40,13 +40,13 @@ Every run has two phases:
 | Phase | What happens |
 |---|---|
 | **1 — Figma refresh** | Pulls the latest values from Figma (colors, sizes, fonts, component structure), shows you what changed since last time, and updates the local snapshot files. |
-| **2 — Code audit** | Runs 16 automated checks against your CSS and reports everything that doesn't match. |
+| **2 — Code audit** | Runs 17 automated checks against your CSS and reports everything that doesn't match. |
 
 You always audit against a fresh snapshot. There's no way to accidentally check against yesterday's design.
 
 ---
 
-## The 16 checks
+## The 17 checks
 
 | # | What it checks |
 |---|---|
@@ -66,6 +66,7 @@ You always audit against a fresh snapshot. There's no way to accidentally check 
 | 14 | **Component slot parity** — Does every declared slot use the exact DS component class the Figma spec calls for? |
 | 15 | **HTML structure snapshot** — Have a slot's ids, component classes, or icon refs changed since the last accepted baseline? |
 | 16 | **Transition contract** — Does every DS component's CSS transition match the documented duration and easing value? Catches duration/easing drift before Figma EASING/TIMING tokens are available. |
+| 17 | **Icon snapshot freshness** — Do the committed icon path data in `figma-icons.snapshot.json` still match what Figma exports today? Catches when an icon's SVG path changes in Figma before the code is updated. Requires `FIGMA_TOKEN`; skipped if not set. |
 
 ---
 
@@ -114,6 +115,7 @@ You always audit against a fresh snapshot. There's no way to accidentally check 
   ✅  [14]  Every declared component slot uses the correct …Pass
   ✅  [15]  HTML structure (ids, component classes, icon re…Pass
   ✅  [16]  All CSS transitions match the documented durati…Pass
+  ✅  [17]  DS icon SVG paths in snapshot match live Figma …Pass
 
 ────────────────────────────────────────────────────────────
 
@@ -139,9 +141,9 @@ You always audit against a fresh snapshot. There's no way to accidentally check 
 
 ```
 ─── Parity Trend ───────────────────────────────────────────
-  ✅  2026-06-15  16/16 [████████████████]
-  ❌  2026-06-16  11/12 [███████████████░]
-  ✅  2026-06-17  16/16 [████████████████]
+  ✅  2026-06-15  17/17 [█████████████████]
+  ❌  2026-06-16  11/12 [████████████████░]
+  ✅  2026-06-17  17/17 [█████████████████]
 ────────────────────────────────────────────────────────────
 ```
 

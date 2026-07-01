@@ -1,7 +1,7 @@
 # /rms-figma-code-parity — Figma DS ↔ Code Parity
 
 **What it does:** Audits whether the CSS codebase faithfully implements the DS Figma file.
-Checks token values, alias chains, structure, bound tokens, unused vars, hardcoded values, build freshness, and more (16 gates). Outputs an HTML report with a gate summary banner and a per-dimension token table (Color / Sizing / Typography). Fix anything red before declaring parity.
+Checks token values, alias chains, structure, bound tokens, unused vars, hardcoded values, build freshness, and more (17 gates). Outputs an HTML report with a gate summary banner and a per-dimension token table (Color / Sizing / Typography). Fix anything red before declaring parity.
 
 > **Sister skill:** `/rms-figma-sync` checks whether a *consumer Figma file* is in sync with the DS. Use that for design handoff validation; use this one for code implementation validation.
 
@@ -124,7 +124,7 @@ Both are machine-generated — never hand-edit. `component-state-tokens.json` (p
 | Phase | Step | Purpose | Must pass |
 |---|---|---|---|
 | **1** | **Figma Refresh** | **Query live Figma, diff snapshots, overwrite both files, verify resolvers** | **Snapshots fresh; every change reconciled** |
-| **2** | **`node scripts/audit.mjs`** | **All 16 gates — snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
+| **2** | **`node scripts/audit.mjs`** | **All 17 gates — snapshot auto-refreshed; bound tokens from REST or committed snapshot** | **0 ❌ gates** |
 | 2 | Component walk | Deep per-component inspection of all states, vars, tokens | 0 new divergences |
 | 2 | Master Token Table | Single source of truth with resolved hex for every token | 0 ❌ rows |
 
@@ -598,13 +598,13 @@ Save the returned JSON as `bound-tokens.json` at project root and commit it. Run
 
 ---
 
-## Phase 2 — Step 2: Run all 16 audit gates
+## Phase 2 — Step 2: Run all 17 audit gates
 
 ```bash
 node scripts/audit.mjs
 ```
 
-All 16 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
+All 17 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
 
 | Gate | Script | What it checks |
 |---|---|---|
@@ -624,6 +624,7 @@ All 16 gates must pass. Gate [1] is always ✅ since Phase 1 just ran.
 | [14] | `component-slot-check.mjs` | **Component slot parity** — Two-phase check: (1) every slot declared in `COMPONENT_USAGES` uses the correct DS component class (`buttonTertiary`, `buttonPrimary`, etc.); (2) **exhaustiveness scan** — every `<button id="X">` carrying a primary/secondary/tertiary/quaternary class MUST be in `COMPONENT_USAGES`, or the gate fails with "undeclared DS component." Prevents an undeclared button from silently using the wrong component type. |
 | [15] | `html-structure-check.mjs` | **HTML structure snapshot** — Fingerprint includes: element IDs, DS component classes on interactive elements, icon `<use href>` refs with context, and **button inner structure** (whether each id'd `<button>` has SVG, span children with their classes, and text content). The button-content dimension specifically catches spurious text labels added inside icon buttons (e.g. `<span class="tab-label">Tree</span>` widening a segmented control). Diffs against stored snapshot; any undeclared structural change is ❌. Accept: `node scripts/html-structure-check.mjs --accept`. |
 | [16] | `transition-check.mjs` | **Transition contract** — Every selector in `TRANSITION_CONTRACT` (structure-contract.mjs) must have a CSS `transition:` declaration containing each documented part (duration, easing, property). Catches animation drift before Figma EASING/TIMING tokens exist. Update the contract when the DS spec changes. |
+| [17] | `icon-freshness-check.mjs` | **Icon snapshot freshness** — For every DS icon in `figma-icons.snapshot.json` (those with a `nodeId`), fetches the live SVG from the Figma REST API and compares path data against the committed snapshot. Fails if any icon path changed in Figma since the last commit. Requires `FIGMA_TOKEN` (`file_content:read` scope); skipped if not set. Fix: update `figma-icons.snapshot.json` + the matching sprite in `ui-shared.js`, then re-run. |
 
 **Gate [2] fix mode:** run `node scripts/parity-check.mjs --fix` to auto-apply sizing/typography value fixes. Color divergences require manual review.
 
@@ -853,7 +854,7 @@ return JSON.stringify(result, null, 2);
 
 | Condition | Steps 3–10 |
 |---|---|
-| All 16 gates pass AND Phase 1 found no new tokens | **Spot-check** — sample 1–2 components per run; full walk not required |
+| All 17 gates pass AND Phase 1 found no new tokens | **Spot-check** — sample 1–2 components per run; full walk not required |
 | Any gate ❌ OR Phase 1 found new/changed tokens | **Mandatory** — run the full sequence before declaring parity |
 | New component added to DS | **Mandatory** — Step 3 deep-walk for that component at minimum |
 
@@ -1165,7 +1166,8 @@ After every run, report this table so the practitioner knows exactly what the au
 | Build freshness | Automated (Gate [7]) | High |
 | Removed tokens reconciled | Manual (Phase 1 diff) | Medium — verify any "used in a rule" replacements visually |
 | Component states fully wired | Automated (Gate [10]) | High |
-| SVG symbols sourced from DS | Automated (Gate [15] — ICON_SYMBOLS contract) | High if all symbols documented |
+| SVG symbols sourced from DS | Automated (Gate [12] — ICON_SYMBOLS contract) | High if all symbols documented |
+| DS icon paths match live Figma | Automated (Gate [17] — icon-freshness-check, requires FIGMA_TOKEN) | High — catches path drift in Figma before code is updated |
 | Visual regression | Automated (Gate [9], requires FIGMA_TOKEN) or Manual (Step 7 screenshots) | **Not run** if neither is configured |
 | CI enforcement | GitHub Actions (`.github/workflows/parity.yml`) | High if configured |
 
